@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07111f">
+  <meta name="description" content="관절을 계층별로 선택하고 수치로 조절하는 3D 휴머노이드 포즈 편집기">
+  <title>Pose Master</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="control-panel" id="controlPanel">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">3D HUMANOID EDITOR</p>
+          <h1>POSE MASTER <span>v1.0</span></h1>
+        </div>
+        <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
+      </header>
+
+      <div class="panel-scroll">
+        <section class="panel-section">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">POSE LIBRARY</p>
+              <h2>대표 포즈</h2>
+            </div>
+            <button class="text-button" id="resetPose" type="button">T-POSE</button>
+          </div>
+          <div class="preset-grid" id="presetGrid" aria-label="포즈 프리셋"></div>
+          <p class="preset-description" id="presetDescription">프리셋을 선택한 뒤 관절별 수치로 다듬어 보세요.</p>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading compact">
+            <div>
+              <p class="section-kicker">JOINT NAVIGATOR</p>
+              <h2>관절 선택</h2>
+            </div>
+          </div>
+
+          <div class="select-stack">
+            <label>
+              <span>신체 영역</span>
+              <select id="regionSelect" disabled></select>
+            </label>
+            <label>
+              <span>부위</span>
+              <select id="groupSelect" disabled></select>
+            </label>
+            <label>
+              <span>세부 관절</span>
+              <select id="jointSelect" disabled></select>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section joint-editor" aria-labelledby="jointEditorTitle">
+          <div class="joint-title-row">
+            <div>
+              <p class="section-kicker">FINE TUNING</p>
+              <h2 id="jointEditorTitle">관절을 선택하세요</h2>
+            </div>
+            <button class="text-button" id="resetJoint" type="button" disabled>이 관절 초기화</button>
+          </div>
+
+          <div id="rotationControls" class="axis-list" aria-live="polite"></div>
+
+          <div id="positionSection" class="position-section" hidden>
+            <div class="subheading">
+              <span>골반 위치</span>
+              <small>모델 전체 이동</small>
+            </div>
+            <div id="positionControls" class="axis-list"></div>
+          </div>
+        </section>
+
+        <section class="panel-section utility-section">
+          <button class="secondary-button" id="copyPose" type="button" disabled>현재 포즈 JSON 복사</button>
+          <p class="status-line" id="statusLine" role="status">3D 모델을 불러오는 중입니다…</p>
+        </section>
+      </div>
+    </aside>
+
+    <main class="viewport" id="viewport" aria-label="3D 포즈 미리보기">
+      <div class="viewport-toolbar">
+        <button class="canvas-button" id="cameraReset" type="button">정면 보기</button>
+        <button class="canvas-button" id="gridToggle" type="button" aria-pressed="true">그리드</button>
+      </div>
+      <div class="loading-card" id="loadingCard">
+        <div class="spinner" aria-hidden="true"></div>
+        <strong>휴머노이드 모델 준비 중</strong>
+        <span>Xbot 골격을 불러오고 있습니다.</span>
+      </div>
+      <div class="gesture-hint">드래그: 회전 · 두 손가락: 확대/이동</div>
+    </main>
+  </div>
+</body>
+</html>
