@@ -18,21 +18,45 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">3D HUMANOID EDITOR</p>
-          <h1>POSE MASTER <span>v1.0</span></h1>
+          <h1>POSE MASTER <span>v1.1</span></h1>
         </div>
         <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
       </header>
 
       <div class="panel-scroll">
         <section class="panel-section">
+          <div class="section-heading compact">
+            <div>
+              <p class="section-kicker">CHARACTER</p>
+              <h2>캐릭터</h2>
+            </div>
+          </div>
+          <div class="character-switch" id="characterSwitch" aria-label="캐릭터 선택">
+            <button class="segment-button active" type="button" data-character="male" disabled>남성형</button>
+            <button class="segment-button" type="button" data-character="female" disabled>여성형</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
           <div class="section-heading">
             <div>
               <p class="section-kicker">POSE LIBRARY</p>
-              <h2>대표 포즈</h2>
+              <h2>부위별 프리셋</h2>
             </div>
             <button class="text-button" id="resetPose" type="button">T-POSE</button>
           </div>
-          <div class="preset-grid" id="presetGrid" aria-label="포즈 프리셋"></div>
+          <div class="preset-group">
+            <div class="preset-group-title"><span>상체</span><small>하체 자세 유지</small></div>
+            <div class="preset-grid" id="upperPresetGrid" aria-label="상체 포즈 프리셋"></div>
+          </div>
+          <div class="preset-group">
+            <div class="preset-group-title"><span>하체</span><small>상체 자세 유지</small></div>
+            <div class="preset-grid" id="lowerPresetGrid" aria-label="하체 포즈 프리셋"></div>
+          </div>
+          <div class="preset-group">
+            <div class="preset-group-title"><span>전신</span><small>전체 관절 적용</small></div>
+            <div class="preset-grid" id="fullPresetGrid" aria-label="전신 포즈 프리셋"></div>
+          </div>
           <p class="preset-description" id="presetDescription">프리셋을 선택한 뒤 관절별 수치로 다듬어 보세요.</p>
         </section>
 
@@ -80,6 +104,21 @@
           </div>
         </section>
 
+        <section class="panel-section">
+          <div class="section-heading compact">
+            <div>
+              <p class="section-kicker">MY POSES</p>
+              <h2>사용자 포즈 저장</h2>
+            </div>
+          </div>
+          <div class="save-pose-row">
+            <input id="poseNameInput" type="text" maxlength="30" placeholder="포즈 이름" aria-label="저장할 포즈 이름" disabled>
+            <button class="primary-small-button" id="savePose" type="button" disabled>저장</button>
+          </div>
+          <div class="saved-pose-list" id="savedPoseList"></div>
+          <p class="storage-note">이 브라우저에 저장되며 다음 방문에도 유지됩니다.</p>
+        </section>
+
         <section class="panel-section utility-section">
           <button class="secondary-button" id="copyPose" type="button" disabled>현재 포즈 JSON 복사</button>
           <p class="status-line" id="statusLine" role="status">3D 모델을 불러오는 중입니다…</p>
@@ -89,6 +128,10 @@
 
     <main class="viewport" id="viewport" aria-label="3D 포즈 미리보기">
       <div class="viewport-toolbar">
+        <div class="zoom-control" aria-label="카메라 확대 축소">
+          <button class="canvas-button zoom-button" id="zoomOut" type="button" aria-label="축소">−</button>
+          <button class="canvas-button zoom-button" id="zoomIn" type="button" aria-label="확대">+</button>
+        </div>
         <button class="canvas-button" id="cameraReset" type="button">정면 보기</button>
         <button class="canvas-button" id="gridToggle" type="button" aria-pressed="true">그리드</button>
       </div>
