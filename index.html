@@ -18,7 +18,7 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">3D HUMANOID EDITOR</p>
-          <h1>POSE MASTER <span>v1.3</span></h1>
+          <h1>POSE MASTER <span>v1.4</span></h1>
         </div>
         <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
       </header>
@@ -146,10 +146,15 @@
           <button class="canvas-button zoom-button" id="zoomOut" type="button" aria-label="축소">−</button>
           <button class="canvas-button zoom-button" id="zoomIn" type="button" aria-label="확대">+</button>
         </div>
+        <div class="zoom-control" aria-label="화면 좌우 이동">
+          <button class="canvas-button zoom-button" id="cameraLeft" type="button" aria-label="화면 왼쪽으로 이동">←</button>
+          <button class="canvas-button zoom-button" id="cameraRight" type="button" aria-label="화면 오른쪽으로 이동">→</button>
+        </div>
         <div class="zoom-control" aria-label="카메라 상하 이동">
           <button class="canvas-button zoom-button" id="cameraDown" type="button" aria-label="카메라 아래로 이동">↓</button>
           <button class="canvas-button zoom-button" id="cameraUp" type="button" aria-label="카메라 위로 이동">↑</button>
         </div>
+        <button class="canvas-button snapshot-button" id="captureSnapshot" type="button" disabled>스냅샷</button>
         <button class="canvas-button" id="cameraReset" type="button">정면 보기</button>
         <button class="canvas-button" id="gridToggle" type="button" aria-pressed="true">그리드</button>
       </div>
@@ -157,6 +162,23 @@
         <div class="spinner" aria-hidden="true"></div>
         <strong>휴머노이드 모델 준비 중</strong>
         <span>Xbot 골격을 불러오고 있습니다.</span>
+      </div>
+      <div class="snapshot-dialog" id="snapshotDialog" role="dialog" aria-modal="true" aria-labelledby="snapshotTitle" hidden>
+        <div class="snapshot-card">
+          <div class="snapshot-heading">
+            <div>
+              <p class="section-kicker">PNG SNAPSHOT</p>
+              <h2 id="snapshotTitle">스냅샷 미리보기</h2>
+            </div>
+            <button class="snapshot-close" id="snapshotClose" type="button" aria-label="스냅샷 닫기">×</button>
+          </div>
+          <img id="snapshotPreview" alt="현재 3D 포즈 스냅샷 미리보기">
+          <div class="snapshot-actions">
+            <button class="secondary-button" id="snapshotDownload" type="button">PNG 다운로드</button>
+            <button class="secondary-button" id="snapshotShare" type="button">공유·저장</button>
+          </div>
+          <p>아이패드에서는 ‘공유·저장’을 눌러 사진이나 파일 앱에 저장할 수 있습니다.</p>
+        </div>
       </div>
       <div class="gesture-hint">드래그: 회전 · 우클릭/두 손가락: 화면 이동</div>
     </main>
