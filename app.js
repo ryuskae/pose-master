@@ -189,6 +189,9 @@ let activeActorId = null;
 let actorSequence = 0;
 let isLoadingActor = false;
 let editingSavedPoseId = null;
+let snapshotDataUrl = null;
+let snapshotFilename = null;
+let isConstrainingOrbit = false;
 
 const actors = [];
 const ui = {};
@@ -220,9 +223,10 @@ function cacheUi() {
     "regionSelect", "groupSelect", "jointSelect", "jointEditorTitle", "rotationControls",
     "positionSection", "positionControls", "resetJoint", "resetPose", "copyPose",
     "statusLine", "loadingCard", "cameraReset", "gridToggle", "zoomIn", "zoomOut",
-    "cameraUp", "cameraDown", "panelToggle", "controlPanel", "panelTabs",
+    "cameraUp", "cameraDown", "cameraLeft", "cameraRight", "panelToggle", "controlPanel", "panelTabs",
     "poseNameInput", "savePose", "cancelPoseEdit", "savedPoseList", "addActor", "actorList",
-    "actorPositionControls", "fitAllActors"
+    "actorPositionControls", "fitAllActors", "captureSnapshot", "snapshotDialog",
+    "snapshotPreview", "snapshotClose", "snapshotDownload", "snapshotShare"
   ].forEach((id) => { ui[id] = document.getElementById(id); });
 }
 
@@ -233,7 +237,7 @@ function initScene() {
   camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
   camera.position.set(3.15, 1.8, 5.25);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance", preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.shadowMap.enabled = true;
@@ -269,7 +273,9 @@ function initScene() {
   orbit.screenSpacePanning = true;
   orbit.minDistance = 1.2;
   orbit.maxDistance = 20;
-  orbit.maxPolarAngle = Math.PI * 0.93;
+  orbit.minPolarAngle = 0.08;
+  orbit.maxPolarAngle = Math.PI / 2 - 0.02;
+  orbit.addEventListener("change", constrainOrbitToActors);
   orbit.update();
 
   new ResizeObserver(resizeRenderer).observe(ui.viewport);
@@ -287,11 +293,12 @@ function resizeRenderer() {
 
 function getActorsBounds() {
   const bounds = new THREE.Box3();
+  const bonePosition = new THREE.Vector3();
   scene.updateMatrixWorld(true);
   actors.forEach((actor) => {
     const actorBounds = new THREE.Box3();
     actor.bones.forEach((bone) => {
-      actorBounds.expandByPoint(bone.getWorldPosition(new THREE.Vector3()));
+      actorBounds.expandByPoint(bone.getWorldPosition(bonePosition));
     });
     if (actorBounds.isEmpty()) actorBounds.setFromObject(actor.model);
     actorBounds.expandByScalar(0.14);
@@ -317,6 +324,32 @@ function fitCameraToActors({ announce = true } = {}) {
   if (announce) setStatus(`모든 인물 ${actors.length}명의 전신을 정면 화면에 맞췄습니다.`);
 }
 
+function constrainOrbitToActors() {
+  if (isConstrainingOrbit || !camera || !orbit || !actors.length) return;
+  const bounds = getActorsBounds();
+  if (bounds.isEmpty()) return;
+  const center = bounds.getCenter(new THREE.Vector3());
+  const size = bounds.getSize(new THREE.Vector3());
+  const distance = camera.position.distanceTo(orbit.target);
+  const viewHalfHeight = Math.tan(camera.fov * DEG / 2) * distance;
+  const viewHalfWidth = viewHalfHeight * Math.max(camera.aspect, 0.2);
+  const maxOffsetX = viewHalfWidth * 0.72 + size.x * 0.25;
+  const maxOffsetY = viewHalfHeight * 0.72 + size.y * 0.25;
+  const maxOffsetZ = Math.max(viewHalfWidth * 0.72 + size.z * 0.25, 0.45);
+  const previous = orbit.target.clone();
+  const minTargetY = Math.max(center.y - maxOffsetY, 0.05);
+  orbit.target.set(
+    clamp(orbit.target.x, center.x - maxOffsetX, center.x + maxOffsetX),
+    clamp(orbit.target.y, minTargetY, center.y + maxOffsetY),
+    clamp(orbit.target.z, center.z - maxOffsetZ, center.z + maxOffsetZ)
+  );
+  const correction = orbit.target.clone().sub(previous);
+  if (correction.lengthSq() === 0) return;
+  isConstrainingOrbit = true;
+  camera.position.add(correction);
+  isConstrainingOrbit = false;
+}
+
 function resetCamera() { fitCameraToActors(); }
 
 function zoomCamera(factor) {
@@ -328,12 +361,19 @@ function zoomCamera(factor) {
   setStatus(factor < 1 ? "카메라를 확대했습니다." : "카메라를 축소했습니다.");
 }
 
-function panCameraVertical(amount) {
+function panCameraScreen(horizontal, vertical) {
   if (!camera || !orbit) return;
-  camera.position.y += amount;
-  orbit.target.y += amount;
+  camera.updateMatrixWorld(true);
+  const step = clamp(camera.position.distanceTo(orbit.target) * 0.07, 0.14, 0.5);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+  const movement = right.multiplyScalar(horizontal * step).add(up.multiplyScalar(vertical * step));
+  camera.position.add(movement);
+  orbit.target.add(movement);
+  constrainOrbitToActors();
   orbit.update();
-  setStatus(amount > 0 ? "화면을 위로 이동했습니다." : "화면을 아래로 이동했습니다.");
+  const direction = horizontal < 0 ? "왼쪽" : horizontal > 0 ? "오른쪽" : vertical > 0 ? "위" : "아래";
+  setStatus(`화면을 ${direction}으로 이동했습니다.`);
 }
 
 function setLoadingState(isLoading, label = "휴머노이드 모델 준비 중") {
@@ -348,7 +388,7 @@ function setLoadingState(isLoading, label = "휴머노이드 모델 준비 중")
 
 function setUiEnabled() {
   const enabled = Boolean(getActiveActor()) && !isLoadingActor;
-  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose, ui.resetPose, ui.fitAllActors]
+  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose, ui.resetPose, ui.fitAllActors, ui.captureSnapshot]
     .forEach((element) => { element.disabled = !enabled; });
   ui.addActor.disabled = isLoadingActor || actors.length >= MAX_ACTORS;
   document.querySelectorAll(".preset-button").forEach((button) => { button.disabled = !enabled; });
@@ -876,6 +916,70 @@ async function copyPoseJson() {
   } catch (error) { console.error(error); setStatus("클립보드 복사 권한을 허용해 주세요.", true); }
 }
 
+function makeSnapshotFilename() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `pose-master-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.png`;
+}
+
+function captureSnapshot() {
+  if (!renderer || !scene || !camera || !actors.length) return;
+  try {
+    const ringWasVisible = selectionRing.visible;
+    selectionRing.visible = false;
+    renderer.render(scene, camera);
+    snapshotDataUrl = renderer.domElement.toDataURL("image/png");
+    snapshotFilename = makeSnapshotFilename();
+    selectionRing.visible = ringWasVisible;
+    renderer.render(scene, camera);
+    ui.snapshotPreview.src = snapshotDataUrl;
+    ui.snapshotDialog.hidden = false;
+    ui.snapshotClose.focus();
+    setStatus("현재 3D 장면의 스냅샷을 만들었습니다.");
+  } catch (error) {
+    console.error(error);
+    selectionRing.visible = Boolean(getActiveActor());
+    setStatus("스냅샷을 만들지 못했습니다.", true);
+  }
+}
+
+function downloadSnapshot() {
+  if (!snapshotDataUrl) return;
+  const link = document.createElement("a");
+  link.href = snapshotDataUrl;
+  link.download = snapshotFilename || makeSnapshotFilename();
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setStatus("PNG 스냅샷 다운로드를 시작했습니다.");
+}
+
+async function shareSnapshot() {
+  if (!snapshotDataUrl) return;
+  try {
+    const blob = await (await fetch(snapshotDataUrl)).blob();
+    const file = new File([blob], snapshotFilename || makeSnapshotFilename(), { type: "image/png" });
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+      await navigator.share({ title: "Pose Master 스냅샷", files: [file] });
+      setStatus("스냅샷 공유·저장을 완료했습니다.");
+      return;
+    }
+    downloadSnapshot();
+  } catch (error) {
+    if (error?.name === "AbortError") { setStatus("스냅샷 공유를 취소했습니다."); return; }
+    console.error(error);
+    downloadSnapshot();
+  }
+}
+
+function closeSnapshot() {
+  ui.snapshotDialog.hidden = true;
+  ui.snapshotPreview.removeAttribute("src");
+  snapshotDataUrl = null;
+  snapshotFilename = null;
+  ui.captureSnapshot.focus();
+}
+
 function setActivePanel(panelId) {
   document.querySelectorAll("[data-panel]").forEach((panel) => { panel.hidden = panel.dataset.panel !== panelId; });
   ui.panelTabs.querySelectorAll("[data-tab]").forEach((button) => {
@@ -906,8 +1010,18 @@ function bindEvents() {
   ui.cameraReset.addEventListener("click", resetCamera);
   ui.zoomIn.addEventListener("click", () => zoomCamera(0.8));
   ui.zoomOut.addEventListener("click", () => zoomCamera(1.25));
-  ui.cameraUp.addEventListener("click", () => panCameraVertical(0.25));
-  ui.cameraDown.addEventListener("click", () => panCameraVertical(-0.25));
+  ui.cameraLeft.addEventListener("click", () => panCameraScreen(-1, 0));
+  ui.cameraRight.addEventListener("click", () => panCameraScreen(1, 0));
+  ui.cameraUp.addEventListener("click", () => panCameraScreen(0, 1));
+  ui.cameraDown.addEventListener("click", () => panCameraScreen(0, -1));
+  ui.captureSnapshot.addEventListener("click", captureSnapshot);
+  ui.snapshotDownload.addEventListener("click", downloadSnapshot);
+  ui.snapshotShare.addEventListener("click", shareSnapshot);
+  ui.snapshotClose.addEventListener("click", closeSnapshot);
+  ui.snapshotDialog.addEventListener("click", (event) => { if (event.target === ui.snapshotDialog) closeSnapshot(); });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !ui.snapshotDialog.hidden) closeSnapshot();
+  });
   ui.gridToggle.addEventListener("click", () => {
     grid.visible = !grid.visible;
     ui.gridToggle.setAttribute("aria-pressed", String(grid.visible));
