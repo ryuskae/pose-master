@@ -188,6 +188,7 @@ let currentJoint = null;
 let activeActorId = null;
 let actorSequence = 0;
 let isLoadingActor = false;
+let editingSavedPoseId = null;
 
 const actors = [];
 const ui = {};
@@ -220,7 +221,7 @@ function cacheUi() {
     "positionSection", "positionControls", "resetJoint", "resetPose", "copyPose",
     "statusLine", "loadingCard", "cameraReset", "gridToggle", "zoomIn", "zoomOut",
     "cameraUp", "cameraDown", "panelToggle", "controlPanel", "panelTabs",
-    "poseNameInput", "savePose", "savedPoseList", "addActor", "actorList",
+    "poseNameInput", "savePose", "cancelPoseEdit", "savedPoseList", "addActor", "actorList",
     "actorPositionControls", "fitAllActors"
   ].forEach((id) => { ui[id] = document.getElementById(id); });
 }
@@ -286,9 +287,14 @@ function resizeRenderer() {
 
 function getActorsBounds() {
   const bounds = new THREE.Box3();
+  scene.updateMatrixWorld(true);
   actors.forEach((actor) => {
-    const actorBounds = new THREE.Box3().setFromObject(actor.model);
-    actorBounds.translate(new THREE.Vector3(actor.rootPosition.x, actor.rootPosition.y, actor.rootPosition.z));
+    const actorBounds = new THREE.Box3();
+    actor.bones.forEach((bone) => {
+      actorBounds.expandByPoint(bone.getWorldPosition(new THREE.Vector3()));
+    });
+    if (actorBounds.isEmpty()) actorBounds.setFromObject(actor.model);
+    actorBounds.expandByScalar(0.14);
     bounds.union(actorBounds);
   });
   return bounds;
@@ -304,12 +310,11 @@ function fitCameraToActors({ announce = true } = {}) {
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(camera.aspect, 0.2));
   const byHeight = size.y / (2 * Math.tan(verticalFov / 2));
   const byWidth = size.x / (2 * Math.tan(horizontalFov / 2));
-  const distance = clamp(Math.max(byHeight, byWidth, size.z * 1.5, 1.5) * 1.35, 1.8, orbit.maxDistance);
-  const direction = new THREE.Vector3(0.44, 0.08, 1).normalize();
+  const distance = clamp(Math.max(byHeight, byWidth, 1.5) * 1.32, 1.8, orbit.maxDistance);
   orbit.target.copy(center);
-  camera.position.copy(center).add(direction.multiplyScalar(distance));
+  camera.position.set(center.x, center.y, bounds.max.z + distance);
   orbit.update();
-  if (announce) setStatus(`모든 인물 ${actors.length}명을 화면 중앙에 맞췄습니다.`);
+  if (announce) setStatus(`모든 인물 ${actors.length}명의 전신을 정면 화면에 맞췄습니다.`);
 }
 
 function resetCamera() { fitCameraToActors(); }
@@ -388,6 +393,7 @@ function addActor() {
     scene.add(actor.model);
     actors.push(actor);
     activeActorId = actor.id;
+    resetSavedPoseEditor();
     applyPreset("upper", "armsRelaxed", { actor, silent: true, fit: false });
     applyPreset("lower", "standing", { actor, silent: true, fit: false });
     setLoadingState(false);
@@ -417,7 +423,10 @@ function deleteActor(actorId) {
   const [removed] = actors.splice(index, 1);
   disposeActor(removed);
   actors.forEach((actor, actorIndex) => { actor.name = `인물 ${actorIndex + 1}`; });
-  if (activeActorId === actorId) activeActorId = actors[Math.min(index, actors.length - 1)].id;
+  if (activeActorId === actorId) {
+    activeActorId = actors[Math.min(index, actors.length - 1)].id;
+    resetSavedPoseEditor();
+  }
   syncActiveActorUi();
   fitCameraToActors({ announce: false });
   setStatus(`${removed.name}을 삭제했습니다. 현재 ${actors.length}명입니다.`);
@@ -425,6 +434,7 @@ function deleteActor(actorId) {
 
 function selectActor(actorId) {
   if (!actors.some((actor) => actor.id === actorId)) return;
+  if (activeActorId !== actorId) resetSavedPoseEditor();
   activeActorId = actorId;
   syncActiveActorUi();
   setStatus(`${getActiveActor().name}을 선택했습니다. 포즈와 위치 조절은 이 인물에 적용됩니다.`);
@@ -767,16 +777,44 @@ function readSavedPoses() {
 
 function writeSavedPoses(poses) { localStorage.setItem(STORAGE_KEY, JSON.stringify(poses)); }
 
+function syncSavedPoseEditor() {
+  const isEditing = Boolean(editingSavedPoseId);
+  ui.savePose.textContent = isEditing ? "덮어쓰기" : "저장";
+  ui.cancelPoseEdit.hidden = !isEditing;
+}
+
+function resetSavedPoseEditor() {
+  editingSavedPoseId = null;
+  if (!ui.poseNameInput) return;
+  ui.poseNameInput.value = "";
+  syncSavedPoseEditor();
+  renderSavedPoses();
+}
+
 function saveCurrentPose() {
   const actor = getActiveActor();
   const name = ui.poseNameInput.value.trim();
   if (!actor) return;
   if (!name) { setStatus("저장할 포즈 이름을 입력해 주세요.", true); ui.poseNameInput.focus(); return; }
   const poses = readSavedPoses();
+  if (editingSavedPoseId) {
+    const index = poses.findIndex((item) => item.id === editingSavedPoseId);
+    if (index >= 0) {
+      const updated = { ...poses[index], name, pose: serializePose(actor), updatedAt: new Date().toISOString() };
+      poses.splice(index, 1);
+      poses.unshift(updated);
+      writeSavedPoses(poses);
+      ui.poseNameInput.value = name;
+      syncSavedPoseEditor();
+      renderSavedPoses();
+      setStatus(`${actor.name}의 수정된 포즈를 ‘${name}’에 덮어썼습니다.`);
+      return;
+    }
+    editingSavedPoseId = null;
+  }
   poses.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, pose: serializePose(actor) });
   writeSavedPoses(poses.slice(0, 30));
-  ui.poseNameInput.value = "";
-  renderSavedPoses();
+  resetSavedPoseEditor();
   setStatus(`${actor.name}의 사용자 포즈 저장: ${name}`);
 }
 
@@ -784,14 +822,19 @@ function loadSavedPose(item) {
   const actor = getActiveActor();
   if (!actor) return;
   applyPoseData(item.pose, actor);
-  setStatus(`${actor.name}에 사용자 포즈 적용: ${item.name}`);
+  editingSavedPoseId = item.id;
+  ui.poseNameInput.value = item.name;
+  syncSavedPoseEditor();
+  renderSavedPoses();
+  setStatus(`${actor.name}에 ‘${item.name}’을 불러왔습니다. 수정 후 덮어쓸 수 있습니다.`);
 }
 
 function deleteSavedPose(id) {
   const poses = readSavedPoses();
   const target = poses.find((item) => item.id === id);
   writeSavedPoses(poses.filter((item) => item.id !== id));
-  renderSavedPoses();
+  if (editingSavedPoseId === id) resetSavedPoseEditor();
+  else renderSavedPoses();
   setStatus(`사용자 포즈 삭제: ${target?.name || "이름 없음"}`);
 }
 
@@ -807,7 +850,7 @@ function renderSavedPoses() {
   }
   poses.forEach((item) => {
     const row = document.createElement("div");
-    row.className = "saved-pose-item";
+    row.className = `saved-pose-item${item.id === editingSavedPoseId ? " editing" : ""}`;
     const loadButton = document.createElement("button");
     loadButton.type = "button";
     loadButton.className = "saved-pose-load";
@@ -848,6 +891,11 @@ function bindEvents() {
   ui.resetJoint.addEventListener("click", resetCurrentJoint);
   ui.copyPose.addEventListener("click", copyPoseJson);
   ui.savePose.addEventListener("click", saveCurrentPose);
+  ui.cancelPoseEdit.addEventListener("click", () => {
+    resetSavedPoseEditor();
+    setStatus("새 포즈 저장 모드로 전환했습니다.");
+    ui.poseNameInput.focus();
+  });
   ui.poseNameInput.addEventListener("keydown", (event) => { if (event.key === "Enter") saveCurrentPose(); });
   ui.addActor.addEventListener("click", addActor);
   ui.fitAllActors.addEventListener("click", () => fitCameraToActors());

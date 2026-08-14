@@ -18,7 +18,7 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">3D HUMANOID EDITOR</p>
-          <h1>POSE MASTER <span>v1.2</span></h1>
+          <h1>POSE MASTER <span>v1.3</span></h1>
         </div>
         <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
       </header>
@@ -128,8 +128,9 @@
             <input id="poseNameInput" type="text" maxlength="30" placeholder="포즈 이름" aria-label="저장할 포즈 이름" disabled>
             <button class="primary-small-button" id="savePose" type="button" disabled>저장</button>
           </div>
+          <button class="saved-pose-new-button" id="cancelPoseEdit" type="button" hidden>새 포즈로 저장하기</button>
           <div class="saved-pose-list" id="savedPoseList"></div>
-          <p class="storage-note">이 브라우저에 저장되며 다음 방문에도 유지됩니다.</p>
+          <p class="storage-note">불러온 포즈를 수정하면 같은 이름에 덮어쓸 수 있습니다.</p>
         </section>
 
         <section class="panel-section utility-section tab-panel" data-panel="saved" hidden>
