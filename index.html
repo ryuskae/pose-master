@@ -18,26 +18,20 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">3D HUMANOID EDITOR</p>
-          <h1>POSE MASTER <span>v1.1</span></h1>
+          <h1>POSE MASTER <span>v1.2</span></h1>
         </div>
         <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
       </header>
 
-      <div class="panel-scroll">
-        <section class="panel-section">
-          <div class="section-heading compact">
-            <div>
-              <p class="section-kicker">CHARACTER</p>
-              <h2>캐릭터</h2>
-            </div>
-          </div>
-          <div class="character-switch" id="characterSwitch" aria-label="캐릭터 선택">
-            <button class="segment-button active" type="button" data-character="male" disabled>남성형</button>
-            <button class="segment-button" type="button" data-character="female" disabled>여성형</button>
-          </div>
-        </section>
+      <nav class="panel-tabs" id="panelTabs" aria-label="편집 메뉴">
+        <button type="button" class="panel-tab active" data-tab="presets">프리셋</button>
+        <button type="button" class="panel-tab" data-tab="joints">관절</button>
+        <button type="button" class="panel-tab" data-tab="actors">인물</button>
+        <button type="button" class="panel-tab" data-tab="saved">저장</button>
+      </nav>
 
-        <section class="panel-section">
+      <div class="panel-scroll">
+        <section class="panel-section tab-panel" data-panel="presets">
           <div class="section-heading">
             <div>
               <p class="section-kicker">POSE LIBRARY</p>
@@ -60,7 +54,7 @@
           <p class="preset-description" id="presetDescription">프리셋을 선택한 뒤 관절별 수치로 다듬어 보세요.</p>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section tab-panel" data-panel="joints" hidden>
           <div class="section-heading compact">
             <div>
               <p class="section-kicker">JOINT NAVIGATOR</p>
@@ -84,7 +78,7 @@
           </div>
         </section>
 
-        <section class="panel-section joint-editor" aria-labelledby="jointEditorTitle">
+        <section class="panel-section joint-editor tab-panel" data-panel="joints" aria-labelledby="jointEditorTitle" hidden>
           <div class="joint-title-row">
             <div>
               <p class="section-kicker">FINE TUNING</p>
@@ -98,13 +92,32 @@
           <div id="positionSection" class="position-section" hidden>
             <div class="subheading">
               <span>골반 위치</span>
-              <small>모델 전체 이동</small>
+              <small>포즈 중심 이동</small>
             </div>
             <div id="positionControls" class="axis-list"></div>
           </div>
         </section>
 
-        <section class="panel-section">
+        <section class="panel-section tab-panel" data-panel="actors" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">CHARACTERS</p>
+              <h2>인물 관리</h2>
+            </div>
+            <button class="text-button" id="addActor" type="button" disabled>+ 인물 추가</button>
+          </div>
+          <div class="actor-list" id="actorList"></div>
+          <div class="position-section actor-position-section">
+            <div class="subheading">
+              <span>선택 인물 위치</span>
+              <small>전후·좌우·상하</small>
+            </div>
+            <div id="actorPositionControls" class="axis-list"></div>
+          </div>
+          <button class="secondary-button actor-fit-button" id="fitAllActors" type="button" disabled>모든 인물 화면에 맞추기</button>
+        </section>
+
+        <section class="panel-section tab-panel" data-panel="saved" hidden>
           <div class="section-heading compact">
             <div>
               <p class="section-kicker">MY POSES</p>
@@ -119,11 +132,11 @@
           <p class="storage-note">이 브라우저에 저장되며 다음 방문에도 유지됩니다.</p>
         </section>
 
-        <section class="panel-section utility-section">
+        <section class="panel-section utility-section tab-panel" data-panel="saved" hidden>
           <button class="secondary-button" id="copyPose" type="button" disabled>현재 포즈 JSON 복사</button>
-          <p class="status-line" id="statusLine" role="status">3D 모델을 불러오는 중입니다…</p>
         </section>
       </div>
+      <p class="status-line panel-status" id="statusLine" role="status">3D 모델을 불러오는 중입니다…</p>
     </aside>
 
     <main class="viewport" id="viewport" aria-label="3D 포즈 미리보기">
@@ -131,6 +144,10 @@
         <div class="zoom-control" aria-label="카메라 확대 축소">
           <button class="canvas-button zoom-button" id="zoomOut" type="button" aria-label="축소">−</button>
           <button class="canvas-button zoom-button" id="zoomIn" type="button" aria-label="확대">+</button>
+        </div>
+        <div class="zoom-control" aria-label="카메라 상하 이동">
+          <button class="canvas-button zoom-button" id="cameraDown" type="button" aria-label="카메라 아래로 이동">↓</button>
+          <button class="canvas-button zoom-button" id="cameraUp" type="button" aria-label="카메라 위로 이동">↑</button>
         </div>
         <button class="canvas-button" id="cameraReset" type="button">정면 보기</button>
         <button class="canvas-button" id="gridToggle" type="button" aria-pressed="true">그리드</button>
@@ -140,7 +157,7 @@
         <strong>휴머노이드 모델 준비 중</strong>
         <span>Xbot 골격을 불러오고 있습니다.</span>
       </div>
-      <div class="gesture-hint">드래그: 회전 · 두 손가락: 확대/이동</div>
+      <div class="gesture-hint">드래그: 회전 · 우클릭/두 손가락: 화면 이동</div>
     </main>
   </div>
 </body>
