@@ -2,11 +2,8 @@
 
 const DEG = Math.PI / 180;
 const STORAGE_KEY = "pose-master.saved-poses.v1";
-
-const characters = {
-  male: { name: "남성형", modelName: "Xbot", url: "https://threejs.org/examples/models/gltf/Xbot.glb" },
-  female: { name: "여성형", modelName: "Michelle", url: "https://threejs.org/examples/models/gltf/Michelle.glb" }
-};
+const MODEL_URL = "https://threejs.org/examples/models/gltf/Xbot.glb";
+const MAX_ACTORS = 6;
 
 const jointTree = {
   upper: {
@@ -146,13 +143,13 @@ const poseLibrary = {
   full: [
     {
       id: "allFours", name: "네발 기기",
-      description: "몸통이 바닥을 향하도록 엎드려 양손과 양무릎을 바닥에 둡니다.",
-      root: { x: 0, y: -0.62, z: 0.08 },
+      description: "몸통과 얼굴이 바닥을 향하도록 엎드려 양손과 양무릎으로 지지합니다.",
+      root: { x: 0, y: -0.72, z: 0.08 },
       joints: {
-        Hips: { x: 82 }, Spine: { x: -12 }, Spine1: { x: 5 }, Spine2: { x: 5 }, Neck: { x: -12 }, Head: { x: -20 },
-        LeftUpLeg: { x: -78, z: 8 }, RightUpLeg: { x: -78, z: -8 }, LeftLeg: { x: 103 }, RightLeg: { x: 103 },
-        LeftFoot: { x: -25 }, RightFoot: { x: -25 }, LeftArm: { x: -18, z: -76 }, RightArm: { x: -18, z: 76 },
-        LeftForeArm: { x: 12 }, RightForeArm: { x: 12 }, LeftHand: { x: -12 }, RightHand: { x: -12 }
+        Hips: { x: 88 }, Spine: { x: -8 }, Spine1: { x: 4 }, Spine2: { x: 4 }, Neck: { x: -15 }, Head: { x: -16 },
+        LeftUpLeg: { x: -82, z: 9 }, RightUpLeg: { x: -82, z: -9 }, LeftLeg: { x: 104 }, RightLeg: { x: 104 },
+        LeftFoot: { x: -24 }, RightFoot: { x: -24 }, LeftArm: { x: -10, z: -78 }, RightArm: { x: -10, z: 78 },
+        LeftForeArm: { x: 8 }, RightForeArm: { x: 8 }, LeftHand: { x: -8 }, RightHand: { x: -8 }
       }
     },
     {
@@ -185,27 +182,29 @@ let scene;
 let camera;
 let renderer;
 let orbit;
-let model;
 let grid;
+let selectionRing;
 let currentJoint = null;
-let currentCharacterId = "male";
-let modelLoadToken = 0;
-let activePresets = { upper: null, lower: null, full: null };
+let activeActorId = null;
+let actorSequence = 0;
+let isLoadingActor = false;
 
-const bones = new Map();
-const initialStates = new Map();
-const rotations = new Map();
-const rootPosition = { x: 0, y: 0, z: 0 };
+const actors = [];
 const ui = {};
 
 function normalizeBoneName(value) {
   return String(value).replace(/mixamorig|joint|bone|[^a-zA-Z0-9]/gi, "").toLowerCase();
 }
 
-function getBone(id) {
-  const target = normalizeBoneName(id);
-  if (bones.has(target)) return bones.get(target);
-  for (const [key, bone] of bones) if (key.endsWith(target) || target.endsWith(key)) return bone;
+function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
+function formatValue(value, step) { return step < 1 ? Number(value).toFixed(2) : String(Math.round(value)); }
+function getActiveActor() { return actors.find((actor) => actor.id === activeActorId) || null; }
+
+function getBone(jointId, actor = getActiveActor()) {
+  if (!actor) return null;
+  const target = normalizeBoneName(jointId);
+  if (actor.bones.has(target)) return actor.bones.get(target);
+  for (const [key, bone] of actor.bones) if (key.endsWith(target) || target.endsWith(key)) return bone;
   return null;
 }
 
@@ -220,16 +219,18 @@ function cacheUi() {
     "regionSelect", "groupSelect", "jointSelect", "jointEditorTitle", "rotationControls",
     "positionSection", "positionControls", "resetJoint", "resetPose", "copyPose",
     "statusLine", "loadingCard", "cameraReset", "gridToggle", "zoomIn", "zoomOut",
-    "panelToggle", "controlPanel", "characterSwitch", "poseNameInput", "savePose", "savedPoseList"
+    "cameraUp", "cameraDown", "panelToggle", "controlPanel", "panelTabs",
+    "poseNameInput", "savePose", "savedPoseList", "addActor", "actorList",
+    "actorPositionControls", "fitAllActors"
   ].forEach((id) => { ui[id] = document.getElementById(id); });
 }
 
 function initScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x07111f);
-  scene.fog = new THREE.Fog(0x07111f, 8, 18);
+  scene.fog = new THREE.Fog(0x07111f, 10, 24);
   camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-  resetCamera();
+  camera.position.set(3.15, 1.8, 5.25);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -250,32 +251,29 @@ function initScene() {
 
   grid = new THREE.GridHelper(16, 32, 0x35506e, 0x16283c);
   scene.add(grid);
+  selectionRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.32, 0.37, 48),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+  );
+  selectionRing.rotation.x = -Math.PI / 2;
+  selectionRing.position.y = 0.012;
+  selectionRing.visible = false;
+  scene.add(selectionRing);
+
   orbit = new THREE.OrbitControls(camera, renderer.domElement);
   orbit.target.set(0, 0.95, 0);
   orbit.enableDamping = true;
   orbit.dampingFactor = 0.075;
-  orbit.minDistance = 1.35;
-  orbit.maxDistance = 12;
+  orbit.enablePan = true;
+  orbit.screenSpacePanning = true;
+  orbit.minDistance = 1.2;
+  orbit.maxDistance = 20;
   orbit.maxPolarAngle = Math.PI * 0.93;
   orbit.update();
+
   new ResizeObserver(resizeRenderer).observe(ui.viewport);
-  loadCharacter("male");
+  addActor();
   animate();
-}
-
-function resetCamera() {
-  if (!camera) return;
-  camera.position.set(3.15, 1.8, 5.25);
-  if (orbit) { orbit.target.set(0, 0.95, 0); orbit.update(); }
-}
-
-function zoomCamera(factor) {
-  if (!camera || !orbit) return;
-  const offset = camera.position.clone().sub(orbit.target);
-  offset.setLength(clamp(offset.length() * factor, orbit.minDistance, orbit.maxDistance));
-  camera.position.copy(orbit.target).add(offset);
-  orbit.update();
-  setStatus(factor < 1 ? "카메라를 확대했습니다." : "카메라를 축소했습니다.");
 }
 
 function resizeRenderer() {
@@ -286,91 +284,217 @@ function resizeRenderer() {
   renderer.setSize(width, height, false);
 }
 
+function getActorsBounds() {
+  const bounds = new THREE.Box3();
+  actors.forEach((actor) => {
+    const actorBounds = new THREE.Box3().setFromObject(actor.model);
+    actorBounds.translate(new THREE.Vector3(actor.rootPosition.x, actor.rootPosition.y, actor.rootPosition.z));
+    bounds.union(actorBounds);
+  });
+  return bounds;
+}
+
+function fitCameraToActors({ announce = true } = {}) {
+  if (!camera || !orbit || !actors.length) return;
+  const bounds = getActorsBounds();
+  if (bounds.isEmpty()) return;
+  const center = bounds.getCenter(new THREE.Vector3());
+  const size = bounds.getSize(new THREE.Vector3());
+  const verticalFov = camera.fov * DEG;
+  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(camera.aspect, 0.2));
+  const byHeight = size.y / (2 * Math.tan(verticalFov / 2));
+  const byWidth = size.x / (2 * Math.tan(horizontalFov / 2));
+  const distance = clamp(Math.max(byHeight, byWidth, size.z * 1.5, 1.5) * 1.35, 1.8, orbit.maxDistance);
+  const direction = new THREE.Vector3(0.44, 0.08, 1).normalize();
+  orbit.target.copy(center);
+  camera.position.copy(center).add(direction.multiplyScalar(distance));
+  orbit.update();
+  if (announce) setStatus(`모든 인물 ${actors.length}명을 화면 중앙에 맞췄습니다.`);
+}
+
+function resetCamera() { fitCameraToActors(); }
+
+function zoomCamera(factor) {
+  if (!camera || !orbit) return;
+  const offset = camera.position.clone().sub(orbit.target);
+  offset.setLength(clamp(offset.length() * factor, orbit.minDistance, orbit.maxDistance));
+  camera.position.copy(orbit.target).add(offset);
+  orbit.update();
+  setStatus(factor < 1 ? "카메라를 확대했습니다." : "카메라를 축소했습니다.");
+}
+
+function panCameraVertical(amount) {
+  if (!camera || !orbit) return;
+  camera.position.y += amount;
+  orbit.target.y += amount;
+  orbit.update();
+  setStatus(amount > 0 ? "화면을 위로 이동했습니다." : "화면을 아래로 이동했습니다.");
+}
+
 function setLoadingState(isLoading, label = "휴머노이드 모델 준비 중") {
+  isLoadingActor = isLoading;
   ui.loadingCard.hidden = !isLoading;
   if (isLoading) {
     ui.loadingCard.querySelector("strong").textContent = label;
-    ui.loadingCard.querySelector("span").textContent = "골격과 관절을 불러오고 있습니다.";
+    ui.loadingCard.querySelector("span").textContent = "기본형 Xbot의 골격과 관절을 불러오고 있습니다.";
   }
-  setUiEnabled(!isLoading);
+  setUiEnabled();
 }
 
-function disposeCurrentModel() {
-  if (!model) return;
-  scene.remove(model);
-  model.traverse((object) => {
+function setUiEnabled() {
+  const enabled = Boolean(getActiveActor()) && !isLoadingActor;
+  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose, ui.resetPose, ui.fitAllActors]
+    .forEach((element) => { element.disabled = !enabled; });
+  ui.addActor.disabled = isLoadingActor || actors.length >= MAX_ACTORS;
+  document.querySelectorAll(".preset-button").forEach((button) => { button.disabled = !enabled; });
+}
+
+function findAvailableActorX() {
+  const candidates = [0, 0.9, -0.9, 1.8, -1.8, 2.7, -2.7];
+  return candidates.find((candidate) => actors.every((actor) => Math.abs(actor.worldPosition.x - candidate) > 0.25)) ?? 0;
+}
+
+function createActor(gltf, index) {
+  const actor = {
+    id: `actor-${Date.now()}-${++actorSequence}`,
+    name: `인물 ${index}`,
+    model: gltf.scene,
+    bones: new Map(),
+    initialStates: new Map(),
+    rotations: new Map(),
+    rootPosition: { x: 0, y: 0, z: 0 },
+    worldPosition: { x: findAvailableActorX(), y: 0, z: 0 },
+    activePresets: { upper: null, lower: null, full: null }
+  };
+  actor.model.position.set(actor.worldPosition.x, actor.worldPosition.y, actor.worldPosition.z);
+  actor.model.traverse((object) => {
+    if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; }
+    if (!object.isBone) return;
+    const key = normalizeBoneName(object.name);
+    actor.bones.set(key, object);
+    actor.initialStates.set(key, { quaternion: object.quaternion.clone(), position: object.position.clone() });
+    actor.rotations.set(key, { x: 0, y: 0, z: 0 });
+  });
+  return actor;
+}
+
+function addActor() {
+  if (isLoadingActor || actors.length >= MAX_ACTORS) return;
+  const nextIndex = actors.length + 1;
+  setLoadingState(true, `${nextIndex}번째 인물 준비 중`);
+  setStatus(`기본형 인물 ${nextIndex}을 추가하는 중입니다…`);
+  new THREE.GLTFLoader().load(MODEL_URL, (gltf) => {
+    const actor = createActor(gltf, nextIndex);
+    scene.add(actor.model);
+    actors.push(actor);
+    activeActorId = actor.id;
+    applyPreset("upper", "armsRelaxed", { actor, silent: true, fit: false });
+    applyPreset("lower", "standing", { actor, silent: true, fit: false });
+    setLoadingState(false);
+    syncActiveActorUi();
+    requestAnimationFrame(() => fitCameraToActors({ announce: false }));
+    setStatus(`${actor.name} 추가 완료 · 총 ${actors.length}명 · ${actor.bones.size}개 골격 인식`);
+  }, undefined, (error) => {
+    console.error(error);
+    setLoadingState(false);
+    setStatus("기본형 인물 모델을 불러오지 못했습니다.", true);
+  });
+}
+
+function disposeActor(actor) {
+  scene.remove(actor.model);
+  actor.model.traverse((object) => {
     if (!object.isMesh) return;
     object.geometry?.dispose?.();
     (Array.isArray(object.material) ? object.material : [object.material]).forEach((material) => material?.dispose?.());
   });
-  model = null;
 }
 
-function loadCharacter(characterId, poseToRestore = null) {
-  const character = characters[characterId];
-  if (!character) return;
-  const token = ++modelLoadToken;
-  setLoadingState(true, `${character.name} 캐릭터 준비 중`);
-  setStatus(`${character.name} 캐릭터를 불러오는 중입니다…`);
+function deleteActor(actorId) {
+  if (actors.length <= 1) { setStatus("인물은 최소 한 명이 필요합니다.", true); return; }
+  const index = actors.findIndex((actor) => actor.id === actorId);
+  if (index < 0) return;
+  const [removed] = actors.splice(index, 1);
+  disposeActor(removed);
+  actors.forEach((actor, actorIndex) => { actor.name = `인물 ${actorIndex + 1}`; });
+  if (activeActorId === actorId) activeActorId = actors[Math.min(index, actors.length - 1)].id;
+  syncActiveActorUi();
+  fitCameraToActors({ announce: false });
+  setStatus(`${removed.name}을 삭제했습니다. 현재 ${actors.length}명입니다.`);
+}
 
-  new THREE.GLTFLoader().load(character.url, (gltf) => {
-    if (token !== modelLoadToken) return;
-    disposeCurrentModel();
-    bones.clear();
-    initialStates.clear();
-    rotations.clear();
-    rootPosition.x = 0; rootPosition.y = 0; rootPosition.z = 0;
-    model = gltf.scene;
-    model.traverse((object) => {
-      if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; }
-      if (!object.isBone) return;
-      const key = normalizeBoneName(object.name);
-      bones.set(key, object);
-      initialStates.set(key, { quaternion: object.quaternion.clone(), position: object.position.clone() });
-      rotations.set(key, { x: 0, y: 0, z: 0 });
+function selectActor(actorId) {
+  if (!actors.some((actor) => actor.id === actorId)) return;
+  activeActorId = actorId;
+  syncActiveActorUi();
+  setStatus(`${getActiveActor().name}을 선택했습니다. 포즈와 위치 조절은 이 인물에 적용됩니다.`);
+}
+
+function syncActiveActorUi() {
+  renderActorList();
+  renderActorPositionControls();
+  updateSelectionRing();
+  buildJointNavigator();
+  updatePresetHighlight();
+  if (currentJoint) selectJoint(currentJoint);
+  setUiEnabled();
+}
+
+function updateSelectionRing() {
+  const actor = getActiveActor();
+  selectionRing.visible = Boolean(actor);
+  if (!actor) return;
+  selectionRing.position.set(actor.worldPosition.x, actor.worldPosition.y + 0.012, actor.worldPosition.z);
+}
+
+function renderActorList() {
+  ui.actorList.replaceChildren();
+  actors.forEach((actor) => {
+    const row = document.createElement("div");
+    row.className = `actor-item${actor.id === activeActorId ? " active" : ""}`;
+    const selectButton = document.createElement("button");
+    selectButton.type = "button";
+    selectButton.className = "actor-select";
+    selectButton.innerHTML = `<strong>${actor.name}</strong><small>X ${actor.worldPosition.x.toFixed(2)} · Y ${actor.worldPosition.y.toFixed(2)} · Z ${actor.worldPosition.z.toFixed(2)}</small>`;
+    selectButton.addEventListener("click", () => selectActor(actor.id));
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "actor-delete";
+    deleteButton.setAttribute("aria-label", `${actor.name} 삭제`);
+    deleteButton.textContent = "×";
+    deleteButton.disabled = actors.length <= 1;
+    deleteButton.addEventListener("click", () => deleteActor(actor.id));
+    row.append(selectButton, deleteButton);
+    ui.actorList.append(row);
+  });
+}
+
+function setActorPosition(axis, value) {
+  const actor = getActiveActor();
+  if (!actor) return;
+  actor.worldPosition[axis] = Number(value);
+  actor.model.position[axis] = actor.worldPosition[axis];
+  updateSelectionRing();
+  renderActorList();
+}
+
+function renderActorPositionControls() {
+  const actor = getActiveActor();
+  ui.actorPositionControls.replaceChildren();
+  if (!actor) return;
+  const labels = { x: "X 좌우", y: "Y 상하", z: "Z 전후" };
+  ["x", "y", "z"].forEach((axis) => {
+    appendAxisControl(ui.actorPositionControls, {
+      label: labels[axis], value: actor.worldPosition[axis], min: -4, max: 4, step: 0.05, unit: "m",
+      onInput: (next) => setActorPosition(axis, next), onCommit: () => setStatus(`${actor.name}의 ${labels[axis]} 위치를 변경했습니다.`)
     });
-    scene.add(model);
-    currentCharacterId = characterId;
-    updateCharacterButtons();
-    buildJointNavigator();
-    setLoadingState(false);
-    if (poseToRestore) applyPoseData(poseToRestore, { updateUi: false });
-    else {
-      applyPreset("upper", "armsRelaxed", { silent: true });
-      applyPreset("lower", "standing", { silent: true });
-    }
-    if (currentJoint) selectJoint(currentJoint);
-    setStatus(`${character.name} 캐릭터 준비 완료 · ${bones.size}개 골격 인식`);
-  }, undefined, (error) => {
-    if (token !== modelLoadToken) return;
-    console.error(error);
-    setLoadingState(false);
-    setStatus(`${character.name} 모델을 불러오지 못했습니다.`, true);
-    if (characterId !== "male") loadCharacter("male", poseToRestore);
   });
-}
-
-function switchCharacter(characterId) {
-  if (characterId === currentCharacterId || !model) return;
-  loadCharacter(characterId, serializePose());
-}
-
-function updateCharacterButtons() {
-  ui.characterSwitch.querySelectorAll("button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.character === currentCharacterId);
-  });
-}
-
-function setUiEnabled(enabled) {
-  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose]
-    .forEach((element) => { element.disabled = !enabled; });
-  document.querySelectorAll(".preset-button, .segment-button").forEach((button) => { button.disabled = !enabled; });
 }
 
 function renderPresets() {
   const grids = { upper: ui.upperPresetGrid, lower: ui.lowerPresetGrid, full: ui.fullPresetGrid };
-  Object.entries(grids).forEach(([category, grid]) => {
-    grid.replaceChildren();
+  Object.entries(grids).forEach(([category, target]) => {
+    target.replaceChildren();
     poseLibrary[category].forEach((pose) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -380,7 +504,7 @@ function renderPresets() {
       button.textContent = pose.name;
       button.disabled = true;
       button.addEventListener("click", () => applyPreset(category, pose.id));
-      grid.append(button);
+      target.append(button);
     });
   });
 }
@@ -397,6 +521,7 @@ function setOptions(select, entries) {
 }
 
 function buildJointNavigator() {
+  if (!getActiveActor()) return;
   const previousRegion = ui.regionSelect.value || "upper";
   const previousGroup = ui.groupSelect.value || "torso";
   setOptions(ui.regionSelect, Object.entries(jointTree).map(([id, region]) => [id, region.label]));
@@ -413,10 +538,10 @@ function updateGroupOptions(preferredGroup) {
 }
 
 function updateJointOptions() {
-  const group = jointTree[ui.regionSelect.value].groups[ui.groupSelect.value];
-  const entries = availableJoints(group);
+  const group = jointTree[ui.regionSelect.value]?.groups[ui.groupSelect.value];
+  const entries = group ? availableJoints(group) : [];
   setOptions(ui.jointSelect, entries);
-  selectJoint(entries[0]?.[0] || null);
+  selectJoint(entries.some(([id]) => id === currentJoint) ? currentJoint : entries[0]?.[0] || null);
 }
 
 function selectJoint(jointId) {
@@ -430,201 +555,236 @@ function selectJoint(jointId) {
   ui.jointSelect.value = jointId;
   ui.jointEditorTitle.textContent = ui.jointSelect.selectedOptions[0]?.textContent || jointId;
   ui.resetJoint.disabled = false;
-  renderAxisControls(ui.rotationControls, "rotation", [-180, 180], 1, "°");
+  renderRotationControls();
   ui.positionSection.hidden = jointId !== "Hips";
-  if (jointId === "Hips") renderAxisControls(ui.positionControls, "position", [-2, 2], 0.01, "m");
+  if (jointId === "Hips") renderRootPositionControls();
 }
 
-function renderAxisControls(container, type, limits, step, unit) {
-  container.replaceChildren();
+function appendAxisControl(container, { label, value, min, max, step, unit, onInput, onCommit }) {
+  const row = document.createElement("div");
+  row.className = "axis-control";
+  row.innerHTML = `
+    <span class="axis-name">${label}</span>
+    <input type="range" min="${min}" max="${max}" step="${step}" value="${value}" aria-label="${label} 조절">
+    <label class="number-wrap"><input type="number" min="${min}" max="${max}" step="${step}" value="${formatValue(value, step)}" aria-label="${label} 수치"><span>${unit}</span></label>`;
+  const slider = row.querySelector('input[type="range"]');
+  const number = row.querySelector('input[type="number"]');
+  const update = (rawValue) => {
+    const next = clamp(Number(rawValue), min, max);
+    if (!Number.isFinite(next)) return;
+    slider.value = String(next);
+    number.value = formatValue(next, step);
+    onInput(next);
+  };
+  slider.addEventListener("input", (event) => update(event.target.value));
+  number.addEventListener("input", (event) => update(event.target.value));
+  slider.addEventListener("change", () => onCommit?.());
+  number.addEventListener("change", () => onCommit?.());
+  container.append(row);
+}
+
+function renderRotationControls() {
+  const actor = getActiveActor();
+  const bone = getBone(currentJoint, actor);
+  ui.rotationControls.replaceChildren();
+  if (!actor || !bone) return;
+  const values = actor.rotations.get(normalizeBoneName(bone.name)) || { x: 0, y: 0, z: 0 };
   ["x", "y", "z"].forEach((axis) => {
-    const value = type === "rotation" ? (rotations.get(normalizeBoneName(getBone(currentJoint)?.name))?.[axis] || 0) : rootPosition[axis];
-    const row = document.createElement("div");
-    row.className = "axis-control";
-    row.innerHTML = `
-      <span class="axis-name">${axis.toUpperCase()}</span>
-      <input type="range" min="${limits[0]}" max="${limits[1]}" step="${step}" value="${value}" aria-label="${axis.toUpperCase()}축 ${type === "rotation" ? "회전" : "위치"}">
-      <label class="number-wrap"><input type="number" min="${limits[0]}" max="${limits[1]}" step="${step}" value="${formatValue(value, step)}" aria-label="${axis.toUpperCase()}축 수치"><span>${unit}</span></label>`;
-    const slider = row.querySelector('input[type="range"]');
-    const number = row.querySelector('input[type="number"]');
-    const update = (rawValue) => {
-      const next = clamp(Number(rawValue), limits[0], limits[1]);
-      if (!Number.isFinite(next)) return;
-      slider.value = String(next);
-      number.value = formatValue(next, step);
-      if (type === "rotation") setJointRotation(currentJoint, axis, next);
-      else setRootPosition(axis, next);
-      markCustomPose();
-    };
-    slider.addEventListener("input", (event) => update(event.target.value));
-    number.addEventListener("input", (event) => update(event.target.value));
-    container.append(row);
+    appendAxisControl(ui.rotationControls, {
+      label: axis.toUpperCase(), value: values[axis], min: -180, max: 180, step: 1, unit: "°",
+      onInput: (next) => { setJointRotation(currentJoint, axis, next, actor); markCustomPose(actor); }
+    });
   });
 }
 
-function formatValue(value, step) { return step < 1 ? Number(value).toFixed(2) : String(Math.round(value)); }
-function clamp(value, min, max) { return Math.min(Math.max(value, min), max); }
+function renderRootPositionControls() {
+  const actor = getActiveActor();
+  ui.positionControls.replaceChildren();
+  if (!actor) return;
+  ["x", "y", "z"].forEach((axis) => {
+    appendAxisControl(ui.positionControls, {
+      label: axis.toUpperCase(), value: actor.rootPosition[axis], min: -2, max: 2, step: 0.01, unit: "m",
+      onInput: (next) => { setRootPosition(axis, next, actor); markCustomPose(actor); }
+    });
+  });
+}
 
-function setJointRotation(jointId, axis, degrees) {
-  const bone = getBone(jointId);
-  if (!bone) return;
+function setJointRotation(jointId, axis, degrees, actor = getActiveActor()) {
+  const bone = getBone(jointId, actor);
+  if (!actor || !bone) return;
   const key = normalizeBoneName(bone.name);
-  const values = rotations.get(key) || { x: 0, y: 0, z: 0 };
+  const values = actor.rotations.get(key) || { x: 0, y: 0, z: 0 };
   values[axis] = Number(degrees);
-  rotations.set(key, values);
-  const base = initialStates.get(key);
+  actor.rotations.set(key, values);
+  const base = actor.initialStates.get(key);
   if (!base) return;
-  const deltaEuler = new THREE.Euler(values.x * DEG, values.y * DEG, values.z * DEG, "XYZ");
-  bone.quaternion.copy(base.quaternion).multiply(new THREE.Quaternion().setFromEuler(deltaEuler));
+  const delta = new THREE.Euler(values.x * DEG, values.y * DEG, values.z * DEG, "XYZ");
+  bone.quaternion.copy(base.quaternion).multiply(new THREE.Quaternion().setFromEuler(delta));
 }
 
-function setRootPosition(axis, value) {
-  const hips = getBone("Hips");
-  if (!hips) return;
-  const base = initialStates.get(normalizeBoneName(hips.name));
+function setRootPosition(axis, value, actor = getActiveActor()) {
+  const hips = getBone("Hips", actor);
+  if (!actor || !hips) return;
+  const base = actor.initialStates.get(normalizeBoneName(hips.name));
   if (!base) return;
-  rootPosition[axis] = Number(value);
-  hips.position[axis] = base.position[axis] + rootPosition[axis];
+  actor.rootPosition[axis] = Number(value);
+  hips.position[axis] = base.position[axis] + actor.rootPosition[axis];
 }
 
-function resetBone(jointId) {
-  const bone = getBone(jointId);
-  if (!bone) return;
+function resetBone(jointId, actor = getActiveActor()) {
+  const bone = getBone(jointId, actor);
+  if (!actor || !bone) return;
   const key = normalizeBoneName(bone.name);
-  const state = initialStates.get(key);
+  const state = actor.initialStates.get(key);
   if (!state) return;
   bone.quaternion.copy(state.quaternion);
-  rotations.set(key, { x: 0, y: 0, z: 0 });
+  actor.rotations.set(key, { x: 0, y: 0, z: 0 });
 }
 
-function resetCategory(category) {
-  (category === "upper" ? upperJointIds : lowerJointIds).forEach(resetBone);
-  if (category === "lower") {
-    const hips = getBone("Hips");
-    const base = hips && initialStates.get(normalizeBoneName(hips.name));
-    if (hips && base) hips.position.copy(base.position);
-    rootPosition.x = 0; rootPosition.y = 0; rootPosition.z = 0;
-  }
+function resetCategory(category, actor = getActiveActor()) {
+  (category === "upper" ? upperJointIds : lowerJointIds).forEach((jointId) => resetBone(jointId, actor));
+  if (category !== "lower" || !actor) return;
+  const hips = getBone("Hips", actor);
+  const base = hips && actor.initialStates.get(normalizeBoneName(hips.name));
+  if (hips && base) hips.position.copy(base.position);
+  actor.rootPosition.x = 0; actor.rootPosition.y = 0; actor.rootPosition.z = 0;
 }
 
-function resetAll({ silent = false } = {}) {
-  initialStates.forEach((state, key) => {
-    const bone = bones.get(key);
+function resetAll({ actor = getActiveActor(), silent = false } = {}) {
+  if (!actor) return;
+  actor.initialStates.forEach((state, key) => {
+    const bone = actor.bones.get(key);
     if (!bone) return;
     bone.quaternion.copy(state.quaternion);
     bone.position.copy(state.position);
-    rotations.set(key, { x: 0, y: 0, z: 0 });
+    actor.rotations.set(key, { x: 0, y: 0, z: 0 });
   });
-  rootPosition.x = 0; rootPosition.y = 0; rootPosition.z = 0;
-  activePresets = { upper: null, lower: null, full: null };
-  updatePresetHighlight();
-  if (currentJoint) selectJoint(currentJoint);
-  ui.presetDescription.textContent = "T포즈로 초기화했습니다. 상체와 하체 프리셋을 조합해 보세요.";
-  if (!silent) setStatus("모든 관절을 T포즈로 초기화했습니다.");
+  actor.rootPosition.x = 0; actor.rootPosition.y = 0; actor.rootPosition.z = 0;
+  actor.activePresets = { upper: null, lower: null, full: null };
+  if (actor.id === activeActorId) {
+    updatePresetHighlight();
+    if (currentJoint) selectJoint(currentJoint);
+    ui.presetDescription.textContent = "선택 인물을 T포즈로 초기화했습니다.";
+  }
+  if (!silent) setStatus(`${actor.name}의 모든 관절을 T포즈로 초기화했습니다.`);
 }
 
 function resetCurrentJoint() {
-  if (!currentJoint) return;
-  resetBone(currentJoint);
+  const actor = getActiveActor();
+  if (!actor || !currentJoint) return;
+  resetBone(currentJoint, actor);
   if (currentJoint === "Hips") {
-    const hips = getBone("Hips");
-    const state = hips && initialStates.get(normalizeBoneName(hips.name));
+    const hips = getBone("Hips", actor);
+    const state = hips && actor.initialStates.get(normalizeBoneName(hips.name));
     if (hips && state) hips.position.copy(state.position);
-    rootPosition.x = 0; rootPosition.y = 0; rootPosition.z = 0;
+    actor.rootPosition.x = 0; actor.rootPosition.y = 0; actor.rootPosition.z = 0;
   }
   selectJoint(currentJoint);
-  markCustomPose();
-  setStatus(`${ui.jointEditorTitle.textContent} 관절을 초기화했습니다.`);
+  markCustomPose(actor);
+  setStatus(`${actor.name}의 ${ui.jointEditorTitle.textContent} 관절을 초기화했습니다.`);
 }
 
 function findPreset(category, poseId) { return poseLibrary[category]?.find((pose) => pose.id === poseId) || null; }
 
-function applyPreset(category, poseId, { silent = false } = {}) {
+function applyPreset(category, poseId, { actor = getActiveActor(), silent = false, fit = true } = {}) {
   const pose = findPreset(category, poseId);
-  if (!pose || !model) return;
+  if (!pose || !actor) return;
   if (category === "full") {
-    resetAll({ silent: true });
-    activePresets = { upper: null, lower: null, full: poseId };
+    resetAll({ actor, silent: true });
+    actor.activePresets = { upper: null, lower: null, full: poseId };
   } else {
-    resetCategory(category);
-    activePresets[category] = poseId;
-    activePresets.full = null;
+    resetCategory(category, actor);
+    actor.activePresets[category] = poseId;
+    actor.activePresets.full = null;
   }
-  Object.entries(pose.root || {}).forEach(([axis, value]) => setRootPosition(axis, value));
+  Object.entries(pose.root || {}).forEach(([axis, value]) => setRootPosition(axis, value, actor));
   Object.entries(pose.joints || {}).forEach(([jointId, values]) => {
-    Object.entries(values).forEach(([axis, value]) => setJointRotation(jointId, axis, value));
+    Object.entries(values).forEach(([axis, value]) => setJointRotation(jointId, axis, value, actor));
   });
-  updatePresetHighlight();
-  ui.presetDescription.textContent = pose.description;
-  if (currentJoint) selectJoint(currentJoint);
-  if (!silent) setStatus(`${category === "upper" ? "상체" : category === "lower" ? "하체" : "전신"} 프리셋 적용: ${pose.name}`);
+  if (actor.id === activeActorId) {
+    updatePresetHighlight();
+    ui.presetDescription.textContent = pose.description;
+    if (currentJoint) selectJoint(currentJoint);
+  }
+  if (fit) requestAnimationFrame(() => fitCameraToActors({ announce: false }));
+  if (!silent) setStatus(`${actor.name} · ${category === "upper" ? "상체" : category === "lower" ? "하체" : "전신"} 프리셋: ${pose.name}`);
 }
 
-function markCustomPose() {
-  activePresets = { upper: null, lower: null, full: null };
-  updatePresetHighlight();
-  ui.presetDescription.textContent = "수동으로 다듬는 중인 사용자 포즈입니다.";
+function markCustomPose(actor = getActiveActor()) {
+  if (!actor) return;
+  actor.activePresets = { upper: null, lower: null, full: null };
+  if (actor.id === activeActorId) {
+    updatePresetHighlight();
+    ui.presetDescription.textContent = `${actor.name}의 포즈를 수동으로 다듬는 중입니다.`;
+  }
 }
 
 function updatePresetHighlight() {
+  const active = getActiveActor()?.activePresets || {};
   document.querySelectorAll(".preset-button").forEach((button) => {
-    button.classList.toggle("active", activePresets[button.dataset.category] === button.dataset.poseId);
+    button.classList.toggle("active", active[button.dataset.category] === button.dataset.poseId);
   });
 }
 
 function allCanonicalJointIds() { return [...new Set([...upperJointIds, ...lowerJointIds])]; }
 
-function serializePose() {
+function serializePose(actor = getActiveActor()) {
+  if (!actor) return null;
   const joints = {};
-  allCanonicalJointIds().forEach((id) => {
-    const bone = getBone(id);
+  allCanonicalJointIds().forEach((jointId) => {
+    const bone = getBone(jointId, actor);
     if (!bone) return;
-    const values = rotations.get(normalizeBoneName(bone.name));
-    if (values && (values.x || values.y || values.z)) joints[id] = { ...values };
+    const values = actor.rotations.get(normalizeBoneName(bone.name));
+    if (values && (values.x || values.y || values.z)) joints[jointId] = { ...values };
   });
-  return { format: "pose-master-v2", character: currentCharacterId, root: { ...rootPosition }, joints };
+  return { format: "pose-master-v3", root: { ...actor.rootPosition }, joints };
 }
 
-function applyPoseData(data, { updateUi = true } = {}) {
-  if (!data || typeof data !== "object") return false;
-  resetAll({ silent: true });
+function applyPoseData(data, actor = getActiveActor()) {
+  if (!actor || !data || typeof data !== "object") return false;
+  resetAll({ actor, silent: true });
   Object.entries(data.root || {}).forEach(([axis, value]) => {
-    if (["x", "y", "z"].includes(axis) && Number.isFinite(Number(value))) setRootPosition(axis, Number(value));
+    if (["x", "y", "z"].includes(axis) && Number.isFinite(Number(value))) setRootPosition(axis, Number(value), actor);
   });
   Object.entries(data.joints || {}).forEach(([jointId, values]) => {
     Object.entries(values || {}).forEach(([axis, value]) => {
-      if (["x", "y", "z"].includes(axis) && Number.isFinite(Number(value))) setJointRotation(jointId, axis, Number(value));
+      if (["x", "y", "z"].includes(axis) && Number.isFinite(Number(value))) setJointRotation(jointId, axis, Number(value), actor);
     });
   });
-  markCustomPose();
-  if (updateUi && currentJoint) selectJoint(currentJoint);
+  markCustomPose(actor);
+  if (actor.id === activeActorId && currentJoint) selectJoint(currentJoint);
+  requestAnimationFrame(() => fitCameraToActors({ announce: false }));
   return true;
 }
 
 function readSavedPoses() {
   try {
-    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(value) ? value : [];
+    const current = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    if (Array.isArray(current)) return current;
+    return [];
   } catch (error) { console.warn(error); return []; }
 }
 
 function writeSavedPoses(poses) { localStorage.setItem(STORAGE_KEY, JSON.stringify(poses)); }
 
 function saveCurrentPose() {
+  const actor = getActiveActor();
   const name = ui.poseNameInput.value.trim();
+  if (!actor) return;
   if (!name) { setStatus("저장할 포즈 이름을 입력해 주세요.", true); ui.poseNameInput.focus(); return; }
   const poses = readSavedPoses();
-  poses.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, pose: serializePose() });
+  poses.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, pose: serializePose(actor) });
   writeSavedPoses(poses.slice(0, 30));
   ui.poseNameInput.value = "";
   renderSavedPoses();
-  setStatus(`사용자 포즈 저장: ${name}`);
+  setStatus(`${actor.name}의 사용자 포즈 저장: ${name}`);
 }
 
 function loadSavedPose(item) {
-  const targetCharacter = item.pose?.character;
-  if (targetCharacter && characters[targetCharacter] && targetCharacter !== currentCharacterId) loadCharacter(targetCharacter, item.pose);
-  else { applyPoseData(item.pose); setStatus(`사용자 포즈 불러오기: ${item.name}`); }
+  const actor = getActiveActor();
+  if (!actor) return;
+  applyPoseData(item.pose, actor);
+  setStatus(`${actor.name}에 사용자 포즈 적용: ${item.name}`);
 }
 
 function deleteSavedPose(id) {
@@ -665,10 +825,19 @@ function renderSavedPoses() {
 }
 
 async function copyPoseJson() {
+  const actor = getActiveActor();
+  if (!actor) return;
   try {
-    await navigator.clipboard.writeText(JSON.stringify(serializePose(), null, 2));
-    setStatus("현재 포즈 JSON을 클립보드에 복사했습니다.");
+    await navigator.clipboard.writeText(JSON.stringify(serializePose(actor), null, 2));
+    setStatus(`${actor.name}의 포즈 JSON을 클립보드에 복사했습니다.`);
   } catch (error) { console.error(error); setStatus("클립보드 복사 권한을 허용해 주세요.", true); }
+}
+
+function setActivePanel(panelId) {
+  document.querySelectorAll("[data-panel]").forEach((panel) => { panel.hidden = panel.dataset.panel !== panelId; });
+  ui.panelTabs.querySelectorAll("[data-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === panelId);
+  });
 }
 
 function bindEvents() {
@@ -680,13 +849,17 @@ function bindEvents() {
   ui.copyPose.addEventListener("click", copyPoseJson);
   ui.savePose.addEventListener("click", saveCurrentPose);
   ui.poseNameInput.addEventListener("keydown", (event) => { if (event.key === "Enter") saveCurrentPose(); });
-  ui.characterSwitch.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-character]");
-    if (button) switchCharacter(button.dataset.character);
+  ui.addActor.addEventListener("click", addActor);
+  ui.fitAllActors.addEventListener("click", () => fitCameraToActors());
+  ui.panelTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-tab]");
+    if (button) setActivePanel(button.dataset.tab);
   });
   ui.cameraReset.addEventListener("click", resetCamera);
   ui.zoomIn.addEventListener("click", () => zoomCamera(0.8));
   ui.zoomOut.addEventListener("click", () => zoomCamera(1.25));
+  ui.cameraUp.addEventListener("click", () => panCameraVertical(0.25));
+  ui.cameraDown.addEventListener("click", () => panCameraVertical(-0.25));
   ui.gridToggle.addEventListener("click", () => {
     grid.visible = !grid.visible;
     ui.gridToggle.setAttribute("aria-pressed", String(grid.visible));
@@ -705,6 +878,7 @@ function init() {
   renderPresets();
   renderSavedPoses();
   bindEvents();
+  setActivePanel("presets");
   initScene();
 }
 
