@@ -413,7 +413,13 @@ function createActor(gltf, index) {
   };
   actor.model.position.set(actor.worldPosition.x, actor.worldPosition.y, actor.worldPosition.z);
   actor.model.traverse((object) => {
-    if (object.isMesh) { object.castShadow = true; object.receiveShadow = true; }
+    if (object.isMesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+      // Skinned meshes keep their bind-pose bounds, which can be culled incorrectly
+      // after large joint rotations when the camera is nearly parallel to the grid.
+      object.frustumCulled = false;
+    }
     if (!object.isBone) return;
     const key = normalizeBoneName(object.name);
     actor.bones.set(key, object);
