@@ -2,6 +2,7 @@
 
 const DEG = Math.PI / 180;
 const STORAGE_KEY = "pose-master.saved-poses.v1";
+const CUSTOM_PRESET_KEY = "pose-master.custom-presets.v1";
 const MODEL_URL = "https://threejs.org/examples/models/gltf/Xbot.glb";
 const MAX_ACTORS = 6;
 
@@ -189,6 +190,7 @@ let activeActorId = null;
 let actorSequence = 0;
 let isLoadingActor = false;
 let editingSavedPoseId = null;
+let editingCustomPreset = null;
 let snapshotDataUrl = null;
 let snapshotFilename = null;
 let isConstrainingOrbit = false;
@@ -220,12 +222,13 @@ function setStatus(message, isError = false) {
 function cacheUi() {
   [
     "viewport", "upperPresetGrid", "lowerPresetGrid", "fullPresetGrid", "presetDescription",
+    "presetSearch", "customPresetName", "saveUpperPreset", "saveLowerPreset", "saveFullPreset", "cancelPresetEdit", "restoreDefaultPresets",
     "regionSelect", "groupSelect", "jointSelect", "jointEditorTitle", "rotationControls",
     "positionSection", "positionControls", "resetJoint", "resetPose", "copyPose",
     "statusLine", "loadingCard", "cameraReset", "gridToggle", "zoomIn", "zoomOut",
     "cameraUp", "cameraDown", "cameraLeft", "cameraRight", "panelToggle", "controlPanel", "panelTabs",
     "poseNameInput", "savePose", "cancelPoseEdit", "savedPoseList", "addActor", "actorList",
-    "actorPositionControls", "fitAllActors", "captureSnapshot", "snapshotDialog",
+    "actorPositionControls", "actorRotationControls", "fitAllActors", "captureSnapshot", "snapshotDialog",
     "snapshotPreview", "snapshotClose", "snapshotDownload", "snapshotShare"
   ].forEach((id) => { ui[id] = document.getElementById(id); });
 }
@@ -388,7 +391,8 @@ function setLoadingState(isLoading, label = "휴머노이드 모델 준비 중")
 
 function setUiEnabled() {
   const enabled = Boolean(getActiveActor()) && !isLoadingActor;
-  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose, ui.resetPose, ui.fitAllActors, ui.captureSnapshot]
+  [ui.regionSelect, ui.groupSelect, ui.jointSelect, ui.copyPose, ui.poseNameInput, ui.savePose, ui.resetPose, ui.fitAllActors,
+    ui.captureSnapshot, ui.customPresetName, ui.saveUpperPreset, ui.saveLowerPreset, ui.saveFullPreset]
     .forEach((element) => { element.disabled = !enabled; });
   ui.addActor.disabled = isLoadingActor || actors.length >= MAX_ACTORS;
   document.querySelectorAll(".preset-button").forEach((button) => { button.disabled = !enabled; });
@@ -409,6 +413,7 @@ function createActor(gltf, index) {
     rotations: new Map(),
     rootPosition: { x: 0, y: 0, z: 0 },
     worldPosition: { x: findAvailableActorX(), y: 0, z: 0 },
+    worldRotationY: 0,
     activePresets: { upper: null, lower: null, full: null }
   };
   actor.model.position.set(actor.worldPosition.x, actor.worldPosition.y, actor.worldPosition.z);
@@ -429,28 +434,41 @@ function createActor(gltf, index) {
   return actor;
 }
 
-function addActor() {
+function loadActorModel() {
+  return new Promise((resolve, reject) => {
+    new THREE.GLTFLoader().load(MODEL_URL, resolve, undefined, reject);
+  });
+}
+
+async function appendActor({ applyDefaults = true } = {}) {
+  const gltf = await loadActorModel();
+  const actor = createActor(gltf, actors.length + 1);
+  scene.add(actor.model);
+  actors.push(actor);
+  activeActorId = actor.id;
+  if (applyDefaults) {
+    applyPreset("upper", "armsRelaxed", { actor, silent: true, fit: false });
+    applyPreset("lower", "standing", { actor, silent: true, fit: false });
+  }
+  return actor;
+}
+
+async function addActor() {
   if (isLoadingActor || actors.length >= MAX_ACTORS) return;
   const nextIndex = actors.length + 1;
   setLoadingState(true, `${nextIndex}번째 인물 준비 중`);
   setStatus(`기본형 인물 ${nextIndex}을 추가하는 중입니다…`);
-  new THREE.GLTFLoader().load(MODEL_URL, (gltf) => {
-    const actor = createActor(gltf, nextIndex);
-    scene.add(actor.model);
-    actors.push(actor);
-    activeActorId = actor.id;
-    resetSavedPoseEditor();
-    applyPreset("upper", "armsRelaxed", { actor, silent: true, fit: false });
-    applyPreset("lower", "standing", { actor, silent: true, fit: false });
+  try {
+    const actor = await appendActor();
     setLoadingState(false);
     syncActiveActorUi();
     requestAnimationFrame(() => fitCameraToActors({ announce: false }));
     setStatus(`${actor.name} 추가 완료 · 총 ${actors.length}명 · ${actor.bones.size}개 골격 인식`);
-  }, undefined, (error) => {
+  } catch (error) {
     console.error(error);
     setLoadingState(false);
     setStatus("기본형 인물 모델을 불러오지 못했습니다.", true);
-  });
+  }
 }
 
 function disposeActor(actor) {
@@ -471,7 +489,6 @@ function deleteActor(actorId) {
   actors.forEach((actor, actorIndex) => { actor.name = `인물 ${actorIndex + 1}`; });
   if (activeActorId === actorId) {
     activeActorId = actors[Math.min(index, actors.length - 1)].id;
-    resetSavedPoseEditor();
   }
   syncActiveActorUi();
   fitCameraToActors({ announce: false });
@@ -480,15 +497,15 @@ function deleteActor(actorId) {
 
 function selectActor(actorId) {
   if (!actors.some((actor) => actor.id === actorId)) return;
-  if (activeActorId !== actorId) resetSavedPoseEditor();
   activeActorId = actorId;
   syncActiveActorUi();
-  setStatus(`${getActiveActor().name}을 선택했습니다. 포즈와 위치 조절은 이 인물에 적용됩니다.`);
+  setStatus(`${getActiveActor().name}을 선택했습니다. 포즈·위치·회전 조절은 이 인물에 적용됩니다.`);
 }
 
 function syncActiveActorUi() {
   renderActorList();
   renderActorPositionControls();
+  renderActorRotationControls();
   updateSelectionRing();
   buildJointNavigator();
   updatePresetHighlight();
@@ -511,7 +528,7 @@ function renderActorList() {
     const selectButton = document.createElement("button");
     selectButton.type = "button";
     selectButton.className = "actor-select";
-    selectButton.innerHTML = `<strong>${actor.name}</strong><small>X ${actor.worldPosition.x.toFixed(2)} · Y ${actor.worldPosition.y.toFixed(2)} · Z ${actor.worldPosition.z.toFixed(2)}</small>`;
+    selectButton.innerHTML = `<strong>${actor.name}</strong><small>X ${actor.worldPosition.x.toFixed(2)} · Y ${actor.worldPosition.y.toFixed(2)} · Z ${actor.worldPosition.z.toFixed(2)} · 회전 ${Math.round(actor.worldRotationY)}°</small>`;
     selectButton.addEventListener("click", () => selectActor(actor.id));
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
@@ -547,22 +564,221 @@ function renderActorPositionControls() {
   });
 }
 
+function setActorRotationY(value) {
+  const actor = getActiveActor();
+  if (!actor) return;
+  actor.worldRotationY = Number(value);
+  actor.model.rotation.y = actor.worldRotationY * DEG;
+  renderActorList();
+}
+
+function renderActorRotationControls() {
+  const actor = getActiveActor();
+  ui.actorRotationControls.replaceChildren();
+  if (!actor) return;
+  appendAxisControl(ui.actorRotationControls, {
+    label: "Y 회전", value: actor.worldRotationY, min: 0, max: 360, step: 1, unit: "°",
+    onInput: setActorRotationY,
+    onCommit: () => setStatus(`${actor.name}을 ${Math.round(actor.worldRotationY)}° 방향으로 회전했습니다.`)
+  });
+}
+
+function readCustomPresets() {
+  try {
+    const data = JSON.parse(localStorage.getItem(CUSTOM_PRESET_KEY) || "{}");
+    return {
+      upper: Array.isArray(data.upper) ? data.upper : [],
+      lower: Array.isArray(data.lower) ? data.lower : [],
+      full: Array.isArray(data.full) ? data.full : [],
+      overrides: {
+        upper: Array.isArray(data.overrides?.upper) ? data.overrides.upper : [],
+        lower: Array.isArray(data.overrides?.lower) ? data.overrides.lower : [],
+        full: Array.isArray(data.overrides?.full) ? data.overrides.full : []
+      },
+      deleted: {
+        upper: Array.isArray(data.deleted?.upper) ? data.deleted.upper : [],
+        lower: Array.isArray(data.deleted?.lower) ? data.deleted.lower : [],
+        full: Array.isArray(data.deleted?.full) ? data.deleted.full : []
+      }
+    };
+  } catch (error) {
+    console.warn(error);
+    return {
+      upper: [], lower: [], full: [],
+      overrides: { upper: [], lower: [], full: [] },
+      deleted: { upper: [], lower: [], full: [] }
+    };
+  }
+}
+
+function writeCustomPresets(presets) {
+  localStorage.setItem(CUSTOM_PRESET_KEY, JSON.stringify(presets));
+}
+
+function getPresets(category) {
+  const presets = readCustomPresets();
+  const overrides = new Map(presets.overrides[category].map((pose) => [pose.id, pose]));
+  const deleted = new Set(presets.deleted[category]);
+  const builtIns = poseLibrary[category]
+    .filter((pose) => !deleted.has(pose.id))
+    .map((pose) => overrides.get(pose.id) || pose);
+  return [...builtIns, ...presets[category]];
+}
+
+function isBuiltInPreset(category, poseId) {
+  return poseLibrary[category].some((pose) => pose.id === poseId);
+}
+
 function renderPresets() {
   const grids = { upper: ui.upperPresetGrid, lower: ui.lowerPresetGrid, full: ui.fullPresetGrid };
+  const query = ui.presetSearch.value.trim().toLocaleLowerCase("ko");
   Object.entries(grids).forEach(([category, target]) => {
     target.replaceChildren();
-    poseLibrary[category].forEach((pose) => {
+    const categoryLabel = category === "upper" ? "상체" : category === "lower" ? "하체" : "전신";
+    const matches = getPresets(category).filter((pose) => {
+      if (!query) return true;
+      return `${pose.name} ${pose.description || ""} ${categoryLabel}`.toLocaleLowerCase("ko").includes(query);
+    });
+    matches.forEach((pose) => {
+      const item = document.createElement("div");
+      item.className = `preset-item${pose.custom ? " custom" : " built-in"}${pose.modified ? " modified" : ""}`;
       const button = document.createElement("button");
       button.type = "button";
       button.className = "preset-button";
       button.dataset.category = category;
       button.dataset.poseId = pose.id;
       button.textContent = pose.name;
-      button.disabled = true;
+      button.disabled = !getActiveActor() || isLoadingActor;
       button.addEventListener("click", () => applyPreset(category, pose.id));
-      target.append(button);
+      item.append(button);
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "preset-delete";
+      deleteButton.setAttribute("aria-label", `${pose.name} 프리셋 삭제`);
+      deleteButton.textContent = "×";
+      deleteButton.addEventListener("click", () => deletePreset(category, pose));
+      item.append(deleteButton);
+      target.append(item);
     });
+    if (!matches.length) {
+      const empty = document.createElement("p");
+      empty.className = "preset-empty";
+      empty.textContent = "검색 결과가 없습니다.";
+      target.append(empty);
+    }
   });
+  updatePresetHighlight();
+}
+
+function serializePresetJoints(actor, jointIds) {
+  const joints = {};
+  jointIds.forEach((jointId) => {
+    const bone = getBone(jointId, actor);
+    if (!bone) return;
+    const values = actor.rotations.get(normalizeBoneName(bone.name));
+    if (values && (values.x || values.y || values.z)) joints[jointId] = { ...values };
+  });
+  return joints;
+}
+
+function syncCustomPresetEditor() {
+  const labels = { upper: "상체", lower: "하체", full: "전신" };
+  [["upper", ui.saveUpperPreset], ["lower", ui.saveLowerPreset], ["full", ui.saveFullPreset]].forEach(([category, button]) => {
+    button.textContent = editingCustomPreset?.category === category ? `${labels[category]} 덮어쓰기` : `${labels[category]} 저장`;
+  });
+  ui.cancelPresetEdit.hidden = !editingCustomPreset;
+}
+
+function startCustomPresetEdit(category, pose) {
+  editingCustomPreset = { category, id: pose.id };
+  ui.customPresetName.value = pose.name;
+  syncCustomPresetEditor();
+}
+
+function resetCustomPresetEditor() {
+  editingCustomPreset = null;
+  ui.customPresetName.value = "";
+  syncCustomPresetEditor();
+}
+
+function saveCustomPreset(category) {
+  const actor = getActiveActor();
+  const name = ui.customPresetName.value.trim();
+  if (!actor) return;
+  if (!name) {
+    setStatus("저장할 사용자 프리셋 이름을 입력해 주세요.", true);
+    ui.customPresetName.focus();
+    return;
+  }
+  const presets = readCustomPresets();
+  const editingThisCategory = editingCustomPreset?.category === category;
+  const editingBuiltIn = editingThisCategory && isBuiltInPreset(category, editingCustomPreset.id);
+  const existingIndex = editingThisCategory && !editingBuiltIn
+    ? presets[category].findIndex((pose) => pose.id === editingCustomPreset.id)
+    : presets[category].findIndex((pose) => pose.name.trim().toLocaleLowerCase("ko") === name.toLocaleLowerCase("ko"));
+  const existingId = editingBuiltIn ? editingCustomPreset.id : existingIndex >= 0 ? presets[category][existingIndex].id : null;
+  const label = category === "upper" ? "상체" : category === "lower" ? "하체" : "전신";
+  const jointIds = category === "upper" ? upperJointIds : category === "lower" ? lowerJointIds : allCanonicalJointIds();
+  const pose = {
+    id: existingId || `custom-${category}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    name,
+    description: editingBuiltIn
+      ? `기본 ${label} 프리셋을 사용자가 수정한 버전입니다.${category === "full" ? "" : " 다른 부위의 자세는 유지됩니다."}`
+      : `사용자가 저장한 ${label} 프리셋입니다.${category === "full" ? "" : " 다른 부위의 자세는 유지됩니다."}`,
+    custom: !editingBuiltIn,
+    modified: editingBuiltIn,
+    joints: serializePresetJoints(actor, jointIds)
+  };
+  if (category !== "upper") pose.root = { ...actor.rootPosition };
+  if (editingBuiltIn) {
+    const overrideIndex = presets.overrides[category].findIndex((item) => item.id === pose.id);
+    if (overrideIndex >= 0) presets.overrides[category].splice(overrideIndex, 1, pose);
+    else presets.overrides[category].push(pose);
+    presets.deleted[category] = presets.deleted[category].filter((id) => id !== pose.id);
+  } else if (existingIndex >= 0) presets[category].splice(existingIndex, 1, pose);
+  else presets[category].push(pose);
+  writeCustomPresets(presets);
+  actor.activePresets = category === "full"
+    ? { upper: null, lower: null, full: pose.id }
+    : { ...actor.activePresets, [category]: pose.id, full: null };
+  editingCustomPreset = { category, id: pose.id };
+  ui.customPresetName.value = name;
+  ui.presetSearch.value = "";
+  renderPresets();
+  syncCustomPresetEditor();
+  ui.presetDescription.textContent = pose.description;
+  setStatus(`${actor.name}의 현재 ${label} 자세를 ‘${name}’ 프리셋으로 ${editingBuiltIn || existingIndex >= 0 ? "덮어썼습니다" : "저장했습니다"}.`);
+}
+
+function deletePreset(category, pose) {
+  if (!window.confirm(`‘${pose.name}’ 프리셋을 삭제할까요?`)) return;
+  const presets = readCustomPresets();
+  const builtIn = isBuiltInPreset(category, pose.id);
+  if (builtIn) {
+    if (!presets.deleted[category].includes(pose.id)) presets.deleted[category].push(pose.id);
+    presets.overrides[category] = presets.overrides[category].filter((item) => item.id !== pose.id);
+  } else {
+    presets[category] = presets[category].filter((item) => item.id !== pose.id);
+  }
+  writeCustomPresets(presets);
+  actors.forEach((actor) => {
+    if (actor.activePresets[category] === pose.id) actor.activePresets[category] = null;
+  });
+  if (editingCustomPreset?.category === category && editingCustomPreset.id === pose.id) resetCustomPresetEditor();
+  renderPresets();
+  setStatus(`${builtIn ? "기본" : "사용자"} 프리셋 삭제: ${pose.name}`);
+}
+
+function restoreDefaultPresetLibrary() {
+  if (!window.confirm("기본 프리셋의 모든 수정·삭제 기록을 원래대로 되돌릴까요? 사용자 프리셋은 유지됩니다.")) return;
+  const presets = readCustomPresets();
+  presets.overrides = { upper: [], lower: [], full: [] };
+  presets.deleted = { upper: [], lower: [], full: [] };
+  writeCustomPresets(presets);
+  resetCustomPresetEditor();
+  ui.presetSearch.value = "";
+  renderPresets();
+  setStatus("기본 프리셋의 수정·삭제 상태를 모두 원래대로 복원했습니다. 사용자 프리셋은 유지됩니다.");
 }
 
 function availableJoints(group) { return group.joints.filter(([id]) => Boolean(getBone(id))); }
@@ -740,7 +956,7 @@ function resetCurrentJoint() {
   setStatus(`${actor.name}의 ${ui.jointEditorTitle.textContent} 관절을 초기화했습니다.`);
 }
 
-function findPreset(category, poseId) { return poseLibrary[category]?.find((pose) => pose.id === poseId) || null; }
+function findPreset(category, poseId) { return getPresets(category).find((pose) => pose.id === poseId) || null; }
 
 function applyPreset(category, poseId, { actor = getActiveActor(), silent = false, fit = true } = {}) {
   const pose = findPreset(category, poseId);
@@ -761,6 +977,7 @@ function applyPreset(category, poseId, { actor = getActiveActor(), silent = fals
     updatePresetHighlight();
     ui.presetDescription.textContent = pose.description;
     if (currentJoint) selectJoint(currentJoint);
+    if (!silent) startCustomPresetEdit(category, pose);
   }
   if (fit) requestAnimationFrame(() => fitCameraToActors({ announce: false }));
   if (!silent) setStatus(`${actor.name} · ${category === "upper" ? "상체" : category === "lower" ? "하체" : "전신"} 프리셋: ${pose.name}`);
@@ -786,17 +1003,23 @@ function allCanonicalJointIds() { return [...new Set([...upperJointIds, ...lower
 
 function serializePose(actor = getActiveActor()) {
   if (!actor) return null;
-  const joints = {};
-  allCanonicalJointIds().forEach((jointId) => {
-    const bone = getBone(jointId, actor);
-    if (!bone) return;
-    const values = actor.rotations.get(normalizeBoneName(bone.name));
-    if (values && (values.x || values.y || values.z)) joints[jointId] = { ...values };
-  });
-  return { format: "pose-master-v3", root: { ...actor.rootPosition }, joints };
+  return { format: "pose-master-v3", root: { ...actor.rootPosition }, joints: serializePresetJoints(actor, allCanonicalJointIds()) };
 }
 
-function applyPoseData(data, actor = getActiveActor()) {
+function serializeScene() {
+  return {
+    format: "pose-master-scene-v1",
+    activeActorIndex: Math.max(actors.findIndex((actor) => actor.id === activeActorId), 0),
+    actors: actors.map((actor) => ({
+      name: actor.name,
+      position: { ...actor.worldPosition },
+      rotationY: actor.worldRotationY,
+      pose: serializePose(actor)
+    }))
+  };
+}
+
+function applyPoseData(data, actor = getActiveActor(), { fit = true } = {}) {
   if (!actor || !data || typeof data !== "object") return false;
   resetAll({ actor, silent: true });
   Object.entries(data.root || {}).forEach(([axis, value]) => {
@@ -809,8 +1032,44 @@ function applyPoseData(data, actor = getActiveActor()) {
   });
   markCustomPose(actor);
   if (actor.id === activeActorId && currentJoint) selectJoint(currentJoint);
-  requestAnimationFrame(() => fitCameraToActors({ announce: false }));
+  if (fit) requestAnimationFrame(() => fitCameraToActors({ announce: false }));
   return true;
+}
+
+async function applySceneData(data) {
+  if (!data || data.format !== "pose-master-scene-v1" || !Array.isArray(data.actors) || !data.actors.length) return false;
+  const savedActors = data.actors.slice(0, MAX_ACTORS);
+  setLoadingState(true, "저장한 장면 불러오는 중");
+  try {
+    while (actors.length > savedActors.length) disposeActor(actors.pop());
+    while (actors.length < savedActors.length) await appendActor({ applyDefaults: false });
+    savedActors.forEach((savedActor, index) => {
+      const actor = actors[index];
+      actor.name = savedActor.name || `인물 ${index + 1}`;
+      ["x", "y", "z"].forEach((axis) => {
+        const value = Number(savedActor.position?.[axis]);
+        actor.worldPosition[axis] = Number.isFinite(value) ? value : 0;
+        actor.model.position[axis] = actor.worldPosition[axis];
+      });
+      const rotationY = Number(savedActor.rotationY);
+      actor.worldRotationY = Number.isFinite(rotationY) ? clamp(rotationY, 0, 360) : 0;
+      actor.model.rotation.y = actor.worldRotationY * DEG;
+      applyPoseData(savedActor.pose, actor, { fit: false });
+    });
+    const requestedActiveIndex = Number(data.activeActorIndex);
+    const activeIndex = clamp(Number.isFinite(requestedActiveIndex) ? Math.trunc(requestedActiveIndex) : 0, 0, actors.length - 1);
+    activeActorId = actors[activeIndex].id;
+    setLoadingState(false);
+    syncActiveActorUi();
+    requestAnimationFrame(() => fitCameraToActors({ announce: false }));
+    return true;
+  } catch (error) {
+    console.error(error);
+    setLoadingState(false);
+    syncActiveActorUi();
+    setStatus("저장한 장면의 인물 모델을 불러오지 못했습니다.", true);
+    return false;
+  }
 }
 
 function readSavedPoses() {
@@ -838,41 +1097,46 @@ function resetSavedPoseEditor() {
 }
 
 function saveCurrentPose() {
-  const actor = getActiveActor();
   const name = ui.poseNameInput.value.trim();
-  if (!actor) return;
+  if (!getActiveActor()) return;
   if (!name) { setStatus("저장할 포즈 이름을 입력해 주세요.", true); ui.poseNameInput.focus(); return; }
   const poses = readSavedPoses();
   if (editingSavedPoseId) {
     const index = poses.findIndex((item) => item.id === editingSavedPoseId);
     if (index >= 0) {
-      const updated = { ...poses[index], name, pose: serializePose(actor), updatedAt: new Date().toISOString() };
+      const updated = { ...poses[index], name, scene: serializeScene(), updatedAt: new Date().toISOString() };
+      delete updated.pose;
       poses.splice(index, 1);
       poses.unshift(updated);
       writeSavedPoses(poses);
       ui.poseNameInput.value = name;
       syncSavedPoseEditor();
       renderSavedPoses();
-      setStatus(`${actor.name}의 수정된 포즈를 ‘${name}’에 덮어썼습니다.`);
+      setStatus(`인물 ${actors.length}명의 수정된 장면을 ‘${name}’에 덮어썼습니다.`);
       return;
     }
     editingSavedPoseId = null;
   }
-  poses.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, pose: serializePose(actor) });
+  poses.unshift({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name, scene: serializeScene() });
   writeSavedPoses(poses.slice(0, 30));
   resetSavedPoseEditor();
-  setStatus(`${actor.name}의 사용자 포즈 저장: ${name}`);
+  setStatus(`인물 ${actors.length}명의 포즈·배치 저장: ${name}`);
 }
 
-function loadSavedPose(item) {
+async function loadSavedPose(item) {
+  if (isLoadingActor) return;
   const actor = getActiveActor();
   if (!actor) return;
-  applyPoseData(item.pose, actor);
+  const loadedScene = item.scene ? await applySceneData(item.scene) : false;
+  if (item.scene && !loadedScene) return;
+  if (!item.scene) applyPoseData(item.pose, actor);
   editingSavedPoseId = item.id;
   ui.poseNameInput.value = item.name;
   syncSavedPoseEditor();
   renderSavedPoses();
-  setStatus(`${actor.name}에 ‘${item.name}’을 불러왔습니다. 수정 후 덮어쓸 수 있습니다.`);
+  setStatus(item.scene
+    ? `‘${item.name}’ 장면의 인물 ${actors.length}명과 포즈·배치를 불러왔습니다.`
+    : `${actor.name}에 구형 1인 포즈 ‘${item.name}’을 불러왔습니다. 덮어쓰면 장면 전체 형식으로 바뀝니다.`);
 }
 
 function deleteSavedPose(id) {
@@ -881,7 +1145,7 @@ function deleteSavedPose(id) {
   writeSavedPoses(poses.filter((item) => item.id !== id));
   if (editingSavedPoseId === id) resetSavedPoseEditor();
   else renderSavedPoses();
-  setStatus(`사용자 포즈 삭제: ${target?.name || "이름 없음"}`);
+  setStatus(`사용자 포즈·장면 삭제: ${target?.name || "이름 없음"}`);
 }
 
 function renderSavedPoses() {
@@ -914,11 +1178,10 @@ function renderSavedPoses() {
 }
 
 async function copyPoseJson() {
-  const actor = getActiveActor();
-  if (!actor) return;
+  if (!getActiveActor()) return;
   try {
-    await navigator.clipboard.writeText(JSON.stringify(serializePose(actor), null, 2));
-    setStatus(`${actor.name}의 포즈 JSON을 클립보드에 복사했습니다.`);
+    await navigator.clipboard.writeText(JSON.stringify(serializeScene(), null, 2));
+    setStatus(`인물 ${actors.length}명의 장면 JSON을 클립보드에 복사했습니다.`);
   } catch (error) { console.error(error); setStatus("클립보드 복사 권한을 허용해 주세요.", true); }
 }
 
@@ -994,6 +1257,16 @@ function setActivePanel(panelId) {
 }
 
 function bindEvents() {
+  ui.presetSearch.addEventListener("input", renderPresets);
+  ui.saveUpperPreset.addEventListener("click", () => saveCustomPreset("upper"));
+  ui.saveLowerPreset.addEventListener("click", () => saveCustomPreset("lower"));
+  ui.saveFullPreset.addEventListener("click", () => saveCustomPreset("full"));
+  ui.cancelPresetEdit.addEventListener("click", () => {
+    resetCustomPresetEditor();
+    setStatus("새 사용자 프리셋 저장 모드로 전환했습니다.");
+    ui.customPresetName.focus();
+  });
+  ui.restoreDefaultPresets.addEventListener("click", restoreDefaultPresetLibrary);
   ui.regionSelect.addEventListener("change", () => updateGroupOptions());
   ui.groupSelect.addEventListener("change", updateJointOptions);
   ui.jointSelect.addEventListener("change", () => selectJoint(ui.jointSelect.value));

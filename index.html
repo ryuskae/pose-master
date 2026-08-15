@@ -18,7 +18,7 @@
       <header class="app-header">
         <div>
           <p class="eyebrow">3D HUMANOID EDITOR</p>
-          <h1>POSE MASTER <span>v1.4.1</span></h1>
+          <h1>POSE MASTER <span>v1.5</span></h1>
         </div>
         <button class="icon-button mobile-only" id="panelToggle" type="button" aria-label="조작 패널 접기">⌄</button>
       </header>
@@ -38,6 +38,19 @@
               <h2>부위별 프리셋</h2>
             </div>
             <button class="text-button" id="resetPose" type="button">T-POSE</button>
+          </div>
+          <div class="preset-tools">
+            <input id="presetSearch" type="search" placeholder="프리셋 이름·설명 검색" aria-label="프리셋 검색">
+            <div class="custom-preset-save">
+              <input id="customPresetName" type="text" maxlength="30" placeholder="프리셋 이름" aria-label="프리셋 이름" disabled>
+              <div class="custom-preset-actions">
+                <button id="saveUpperPreset" type="button" disabled>상체 저장</button>
+                <button id="saveLowerPreset" type="button" disabled>하체 저장</button>
+                <button id="saveFullPreset" type="button" disabled>전신 저장</button>
+              </div>
+            </div>
+            <button class="custom-preset-new-button" id="cancelPresetEdit" type="button" hidden>새 프리셋으로 저장하기</button>
+            <button class="preset-library-reset" id="restoreDefaultPresets" type="button">기본 프리셋 원래대로 복원</button>
           </div>
           <div class="preset-group">
             <div class="preset-group-title"><span>상체</span><small>하체 자세 유지</small></div>
@@ -114,6 +127,13 @@
             </div>
             <div id="actorPositionControls" class="axis-list"></div>
           </div>
+          <div class="position-section actor-rotation-section">
+            <div class="subheading">
+              <span>선택 인물 회전</span>
+              <small>제자리에서 360°</small>
+            </div>
+            <div id="actorRotationControls" class="axis-list"></div>
+          </div>
           <button class="secondary-button actor-fit-button" id="fitAllActors" type="button" disabled>모든 인물 화면에 맞추기</button>
         </section>
 
@@ -121,7 +141,7 @@
           <div class="section-heading compact">
             <div>
               <p class="section-kicker">MY POSES</p>
-              <h2>사용자 포즈 저장</h2>
+              <h2>사용자 포즈·장면 저장</h2>
             </div>
           </div>
           <div class="save-pose-row">
@@ -130,11 +150,11 @@
           </div>
           <button class="saved-pose-new-button" id="cancelPoseEdit" type="button" hidden>새 포즈로 저장하기</button>
           <div class="saved-pose-list" id="savedPoseList"></div>
-          <p class="storage-note">불러온 포즈를 수정하면 같은 이름에 덮어쓸 수 있습니다.</p>
+          <p class="storage-note">인물 수와 각 인물의 포즈·위치·회전을 함께 저장하며, 불러온 장면에 덮어쓸 수 있습니다.</p>
         </section>
 
         <section class="panel-section utility-section tab-panel" data-panel="saved" hidden>
-          <button class="secondary-button" id="copyPose" type="button" disabled>현재 포즈 JSON 복사</button>
+          <button class="secondary-button" id="copyPose" type="button" disabled>현재 장면 JSON 복사</button>
         </section>
       </div>
       <p class="status-line panel-status" id="statusLine" role="status">3D 모델을 불러오는 중입니다…</p>
